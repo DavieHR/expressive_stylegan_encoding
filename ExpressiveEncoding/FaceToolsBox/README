@@ -1,0 +1,50 @@
+
+Here is how to run the code.  There is a postscript version of the paper
+in doc.  If you have problems let me know.  If it turns out to be helpful
+let me know.  If you use the code in a paper please acknowledge me and
+if it forms a significant portion of a piece of work please consult with
+me regarding appropriate authorship.
+
+Compiling:
+
+Affine version:
+
+gcc image-regress.c robust-affine.c gm2.c allan-affine-warp.c ctf-image.c derivatives.c image-io.c utils.c pyramid.c -o imgregress -lm
+
+Planar version:
+
+gcc image-regress-planar.c planar-regression.c gm2.c outliers.c planar-warp.c derivatives.c image-io.c utils.c pyramid.c -o planar -lm
+
+running the code
+
+imgregress 
+	image1 image2 	; binary images (no header)
+	outpath  	; where the results go
+	-iters n	; max number of iterations at each level in the pyramid
+	-S n		; Starting value of sigma
+	-s n		; ending value of sigma
+	-nx n 		; colums
+	-ny n		; rows
+	-f [0,1]	; whether the image is filtered or not
+	-m [0,1,2]	; number of motions to find (1, 2, or 3)
+	-a [0,1]	; fit an affine (1) or constant (0) model
+	-p [0,1]	; PLANAR VERSION ONLY fit a planar model (1) or not (0)
+	-l n		; number of levels in the pyramid
+	-r f		; rate at which to decrease sigma
+
+Result files are stored as raw bytes <file>.bin and a header <file>.hdr.
+The results are stored in:
+	outfile-mean*		; image1 warped to image2 and the mean
+	outfile-warped*		; image1 warped to image2 and the difference
+	outfile-stable*		; image1 warped by flow
+	outfile-outliers*	; data outliers in black (good points are white)
+
+Note: For the planar case, the images are warped BACKWARDS towards image1 not
+forwards.
+
+example of running the code:
+
+src/imgregress data/tree00.bin data/tree01.bin results/picket -iters 30 -s 15.0 -S 25.0 -nx 256 -ny 192 -f 0 -m 1 -a 1 -l 3 -r 0.95
+
+src/planar data/tree00.bin data/tree01.bin results/planar-picket -iters 30 -s 15.0 -S 25.0 -nx 256 -ny 192 -f 0 -m 1 -a 1 -p 1 -l 3 -r 0.95
+

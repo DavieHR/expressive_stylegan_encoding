@@ -1,0 +1,17 @@
+# files
+
+*.mp4
+*.pgm
+*.png
+*.jpg
+*.task
+*.pt
+*.pth
+
+
+# folder
+.idea/
+__pycache__/
+src/
+tensorboard/
+
