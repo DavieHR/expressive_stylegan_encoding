@@ -1,5 +1,5 @@
-- [] define loss flow in yaml 
+- [ ] define loss flow in yaml 
 
-- [] get video effect.
+- [ ] get video effect.
 
-- [] model file on aws server.
+- [ ] model file on aws server.
