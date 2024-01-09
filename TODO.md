@@ -1,5 +1,13 @@
-- [] define loss flow in yaml 
+## Deadline 0112
+-- 
+- [ ] refactor facial codes.
 
-- [] get video effect.
+- [ ] gpu parallel.
 
-- [] model file on aws server.
+- [ ] define loss flow in yaml.
+
+- [ ] video demo.
+
+- [x] model file on aws server.
+
+

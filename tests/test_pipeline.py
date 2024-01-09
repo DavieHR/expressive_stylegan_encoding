@@ -43,6 +43,10 @@ def test_pose():
     from ExpressiveEncoding.train import load_model, torch, get_detector, yaml, edict, stylegan_path
     detector = get_detector()
     G = load_model(stylegan_path).synthesis
+    for p in G.parameters():
+        p.requires_grad = False
+    pose_edit = PoseEdit()
+
     face_e4e_path = './tests/e4e/0_gen.png' 
     id_latent_path = './tests/e4e/id_latent.pt'
     id_image_path = './tests/e4e/4_gen.png'
@@ -71,6 +75,7 @@ def test_pose():
                                                    face_info_from_gen, \
                                                    face_info_from_id, \
                                                    G, \
+                                                   pose_edit, \
                                                    config_pose \
                                                  )
     image_posed = cv2.cvtColor(image_posed, cv2.COLOR_RGB2BGR)
@@ -134,11 +139,27 @@ def test_pti():
                                            writer = writer
                                           )
 
+@pytest.mark.validate
+def test_validate():
+
+    from copy import deepcopy
+    from ExpressiveEncoding.train import load_model, torch, yaml, edict, stylegan_path, from_tensor, StyleSpaceDecoder, validate_video_gen
+    G = load_model(stylegan_path).synthesis
+    ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))
+    state_dict_path = './results/exp002/pti/snapshots/200.pth'
+    latent_folder = './results/exp002/facial'
+    save_path = "./tests/validate.mp4"
+    validate_video_gen(save_path, 
+                       state_dict_path,
+                       latent_folder,
+                       ss_decoder,
+                       100
+                       )
+
 @pytest.mark.pipeline
 def test_pipeline():
 
-    face_folder = './tests/face'
     save_path = "./tests/pipeline"
     config_path = './tests/'
-    expressive_encoding_pipeline(face_folder, save_path, config_path)
+    expressive_encoding_pipeline(config_path, save_path)
 

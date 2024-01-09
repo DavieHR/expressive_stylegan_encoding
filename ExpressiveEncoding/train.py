@@ -2,8 +2,11 @@ import os
 import cv2
 import torch
 import yaml
+import click
+import imageio
 import numpy as np
 
+from tqdm import tqdm
 from easydict import EasyDict as edict
 from typing import Callable, List
 from functools import reduce
@@ -15,6 +18,7 @@ from .decoder import StyleSpaceDecoder, load_model
 from .encoder import Encoder4EditingWrapper
 from .FaceToolsBox.alignment import get_detector, mp, infer, get_euler_angle, get_landmarks_from_mediapipe_results, need_to_warp
 from .FaceToolsBox.test_ldm import need_to_warp
+from .FaceToolsBox.crop_image import crop
 
 from .loss import LossRegisterBase
 from .utils import to_tensor, from_tensor
@@ -31,10 +35,14 @@ points = [(10, 338),(338, 297),(297, 332),
           (162, 21),(21, 54),(54, 103),
           (103, 67),(67, 109),(109, 10)]
 
-stylegan_path = "./codes/encoder4editing/pretrained_models/ffhq.pkl"
-e4e_path = "./ExpressiveEncoding/encoder4editing/e4e_ffhq_encode.pt"
-DEBUG = os.environ.get("DEBUG", 0)
-if DEBUG:
+where_am_i = os.path.dirname(os.path.realpath(__file__))
+stylegan_path = os.path.join(where_am_i, "third_party/models/stylegan2_ffhq.pkl")
+e4e_path = os.path.join(where_am_i, "third_party/models/e4e_ffhq_encode.pt")
+DEBUG = int(os.environ.get("DEBUG", 0))
+VERBOSE = os.environ.get("VERBOSE", False)
+VERBOSE = True if VERBOSE in [True, 'True', 'TRUE', 'true', 1] else False
+
+if VERBOSE or DEBUG:
     logger.setLevel(logging.DEBUG)
 
 def get_face_info(
@@ -66,7 +74,7 @@ def select_id_latent(
     from .loss.id_loss import IDLoss
     e4e = Encoder4EditingWrapper(e4e_path)
     files = [os.path.join(path, x) for x in os.listdir(path)]
-    files = sorted(files, key = lambda x: os.path.basename(x).split('.')[0])
+    files = sorted(files, key = lambda x: int(os.path.basename(x).split('.')[0]))
     metric = IDLoss()
     _metric_value = torch.tensor([999.0], dtype = torch.float32).to("cuda")
 
@@ -111,22 +119,15 @@ def pose_optimization(
                         res_gt: edict,
                         res_id: edict,
                         G: Callable,
-                        config: edict,
+                        pose_edit: Callable,
+                        loss_register: Callable,
                         **kwargs
                      ):
-
-    class LossRegister(LossRegisterBase):
-        def forward(self, x, y):
-            l2_loss = self.l2_loss(x, y).mean()
-            lpips_loss = self.lpips_loss(x,y).mean()
     
-            return {
-                     "l2_loss": l2_loss,
-                     "lpips_loss": lpips_loss
-                   }
-    for p in G.parameters():
-        p.requires_grad = False
-    pose_edit = PoseEdit()
+    if VERBOSE:
+        t = Timer()
+
+
     h,w = ground_truth.shape[:2]
 
     id_image = np.float32(id_image / 255.0)
@@ -161,9 +162,8 @@ def pose_optimization(
     gt_tensor = 2 * (gt_tensor -  0.5)
     id_tensor = 2 * (id_tensor -  0.5)
 
-    loss_register = LossRegister(config)
-    epochs = config.get("epochs", 100)
 
+    epochs = kwargs.get("epochs", 100)
     yaw, pitch = res_id.yaw, res_id.pitch
     id_zflow = pose_edit(latent_id, yaw, pitch)
     
@@ -173,6 +173,8 @@ def pose_optimization(
     pitch_to_optim.requires_grad = True
     optim = torch.optim.Adam([yaw_to_optim, pitch_to_optim], lr = 1)
 
+    if VERBOSE:
+        t.tic("optimize pose")
     for epoch in range(1, epochs + 1):
         w =  pose_edit(id_zflow, 
                        yaw_to_optim,
@@ -183,67 +185,34 @@ def pose_optimization(
         ret = loss_register(mask_id_tensor * gen_tensor, mask_gt_tensor * gt_tensor)
         optim.step()
 
+    if VERBOSE:
+        t.toc("optimize pose")
     return w, from_tensor(gen_tensor) * 0.5 + 0.5
 
 # Stage III: facial attribute optimized
-
 def facial_attribute_optimization(    
                                   w_latent: torch.Tensor,
                                   ground_truth: np.ndarray,
                                   ret_gt: edict,
-                                  config: edict,
+                                  loss_register: Callable,
                                   ss_decoder: object,
                                   gammas: torch.Tensor = None,
                                   images_tensor_last: torch.Tensor = None,
                                   gt_images_tensor_last: torch.Tensor = None,
                                   **kwargs
                                  ):
+    if VERBOSE:
+        t = Timer()
     alpha_init = [0] * 32
     alpha_tensor = []
     for x in alpha_init:
         alpha_per_tensor = torch.tensor(x).type(torch.FloatTensor).cuda()
         alpha_per_tensor.requires_grad = True
         alpha_tensor.append(alpha_per_tensor)
-
-    dlatents = ss_decoder.get_style_space(w_latent)
+    dlatents = ss_decoder.get_style_space(w_latent.detach())
     ground_truth = np.float32(ground_truth / 255.0)
     gt_image_tensor = to_tensor(ground_truth).to("cuda")
     gt_image_tensor = (gt_image_tensor - 0.5) * 2
-
-    class LossRegister(LossRegisterBase):
-        def forward(self, 
-                    x, 
-                    y,
-                    mask,
-                    weights_all,
-                    weights,
-                    x_pre = None,
-                    y_pre = None
-                   ):
-            l2_loss = self.l2(x, y) * weights_all
-            lpips_loss = self.lpips(x,y, is_reduce = False) * weights
-            fp_loss = self.fp(x, y, mask)    
-            inter_frame_loss = torch.zeros_like(fp_loss)
-            id_loss = self.id_loss(x, y) * 0.0
-            ret = {
-                     "l2_loss": l2_loss,
-                     "lpips_loss": lpips_loss,
-                     "fp_loss": fp_loss,
-                     "id_loss": id_loss,
-                   }
-
-            if x_pre is not None and y_pre is not None:
-                inter_frame_loss = self.if_loss(
-                                                x,
-                                                x_pre, 
-                                                y,
-                                                y_pre,
-                                                self.lpips
-                                               ) * 2.0 * weights_all
-                ret["diff_frame_loss"] = inter_frame_loss
-
-            return ret
-    loss_register = LossRegister(config)
 
     alpha_indexes = [
                      6, 11, 8, 14, 15, # represent Mouth
@@ -441,25 +410,54 @@ def facial_attribute_optimization(
     weights[-1] = 0.0
 
     epochs = kwargs.get("epochs", 100)
+
+    if VERBOSE:
+        t.tic("facial optimize..")
+
     for epoch in range(1, epochs + 1):
+        if VERBOSE:
+            t.tic("one epoch")
+        if VERBOSE:
+            t.tic("masked dlatent")
         dlatents_tmp = get_masked_dlatent_in_region(alpha_tensor)
+        if VERBOSE:
+            t.toc("masked dlatent")
+
+        if VERBOSE:
+            t.tic("ss decoder")
         images_tensor = ss_decoder(dlatents_tmp)
+        if VERBOSE:
+            t.toc("ss decoder")
+        if VERBOSE:
+            t.tic("loss")
         ret = loss_register(
                             images_tensor, 
                             gt_images_tensor,
                             masks_oval_gt,
                             weights_all,
                             weights,
+                            is_gradient = False,
                             x_pre = images_tensor_last,
-                            y_pre = gt_images_tensor_last,
-                            is_gradient = False
+                            y_pre = gt_images_tensor_last
                            )
+        if VERBOSE:
+            t.toc("loss")
+        if VERBOSE:
+            t.tic("optim")
         loss = ret["loss"]
         for j in range(region_num):
             optim.zero_grad()
             loss[j].backward(retain_graph = True)
             optim.step()
+        if VERBOSE:
+            t.toc("optim")
+        if VERBOSE:
+            t.tic("sche")
         sche.step()
+        if VERBOSE:
+            t.toc("sche")
+        if VERBOSE:
+            t.toc("one epoch")
         if DEBUG and epoch % 10 == 0:
             string_to_info = reduce(lambda x, y: x + ', ' + y , [f'{k} {v.mean().item()}' for k, v in ret.items()])
             logger.debug(f"{epoch}/{epochs}: ... {string_to_info}")
@@ -476,10 +474,12 @@ def facial_attribute_optimization(
             #image_to_show = torch.cat((image_after_update_all, gt_image_tensor),dim = 2)
             #writer.add_image(f'image_{index}', make_grid(image_to_show.detach(),normalize=True, scale_each=True), epoch)
 
+    if VERBOSE:
+        t.toc("facial optimize..")
+
     with torch.no_grad():
         dlatents_all = update_alpha()
         image_tensor_after_update_all = ss_decoder(dlatents_all) 
-
     image_gen = (from_tensor(image_tensor_after_update_all) * 0.5 + 0.5) * 255.0
     return dlatents_all,\
            images_tensor,\
@@ -495,8 +495,6 @@ def pivot_finetuning(
                      config: edict,
                      **kwargs
                     ):
-
-    import pdb
     from torchvision import transforms
     from torchvision.utils import make_grid
     from torch.utils.data import DataLoader
@@ -533,10 +531,12 @@ def pivot_finetuning(
     device = "cuda:0"
     optim = torch.optim.Adam(ss_decoder.parameters(), lr = 3e-4)
     total_idx = 0
-    epochs = kwargs.get("epochs", 200)
+    epochs = kwargs.get("epochs", 400)
     writer = kwargs.get("writer", None)
+    save_interval = kwargs.get("save_interval", 100)
     lastest_model_path = None
-    for epoch in range(1, epochs + 1):
+    epoch_pbar = tqdm(range(1, epochs + 1))
+    for epoch in epoch_pbar:
         for idx, (image, pivot) in enumerate(dataloader):
             image = image.to(device)  
             # reduce redundant axis
@@ -553,20 +553,59 @@ def pivot_finetuning(
                 logger.info(f"{idx+1}/{epoch}/{epochs}: {string_to_info}")
                 image_to_show = torch.cat((image_gen, image),dim = 2)
                 writer.add_image(f'image', make_grid(image_to_show.detach(),normalize=True, scale_each=True), total_idx)
-        if epoch % 10 == 0:
+        if epoch % save_interval == 0:
             torch.save(ss_decoder.state_dict(), os.path.join(path_snapshots, f"{epoch}.pth"))
             lastest_model_path = os.path.join(path_snapshots, f"{epoch}.pth")
     return lastest_model_path
 
+def validate_video_gen(
+                        save_video_path:str,
+                        state_dict_path: str,
+                        latent_folder: str,
+                        ss_decoder: Callable,
+                        video_length: int
+                      ):
+    ss_decoder.load_state_dict(torch.load(state_dict_path))
+    with imageio.get_writer(save_video_path, fps = 25) as writer:
+        for index in tqdm(range(video_length)):
+            style_space_latent = torch.load(os.path.join(latent_folder, f"{index+1}.pt"))
+            image = from_tensor(ss_decoder(style_space_latent) * 0.5 + 0.5) * 255.0
+            writer.append_data(image)
+
 def expressive_encoding_pipeline(
-                                 face_folder_path: str,
-                                 save_path:str,
-                                 config_path: str
+                                 config_path: str,
+                                 save_path: str
                                 ):
+
+    #TODO: log generator.
 
     from copy import deepcopy
     G = load_model(stylegan_path).synthesis
+    for p in G.parameters():
+        p.requires_grad = False
+
+    pose_edit = PoseEdit()
     ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))
+    for p in ss_decoder.parameters():
+        p.requires_grad = False
+
+    with open(os.path.join(config_path, "config.yaml")) as f:
+        basis_config = edict(yaml.load(f, Loader = yaml.CLoader))
+
+    
+    video_path = basis_config.path
+
+    if os.path.isdir(video_path):
+        face_folder_path = video_path
+    else:
+        face_folder_path = os.path.join(save_path, "data")
+        face_folder_path = os.path.join(face_folder_path, "smooth")
+        if not os.path.exists(face_folder_path):
+            crop(video_path,face_folder_path)
+        else:
+            logger.info("re-used last processed data.")
+
+    assert len(os.listdir(face_folder_path)) > 1, "face files not exists."
 
     stage_one_path = os.path.join(save_path, "e4e")  
     stage_two_path = os.path.join(save_path, "pose")  
@@ -579,7 +618,7 @@ def expressive_encoding_pipeline(
     os.makedirs(stage_two_path, exist_ok = True)
     os.makedirs(stage_three_path, exist_ok = True)
     os.makedirs(stage_four_path, exist_ok = True)
-    #os.makedirs(cache_path, exist_ok = True)
+
     writer = None
     if DEBUG:
         from torch.utils.tensorboard import SummaryWriter
@@ -618,6 +657,53 @@ def expressive_encoding_pipeline(
         config_pti = edict(yaml.load(f3, Loader = yaml.CLoader))
         
 
+    class PoseLossRegister(LossRegisterBase):
+        def forward(self, x, y):
+            l2_loss = self.l2_loss(x, y).mean()
+            lpips_loss = self.lpips_loss(x,y).mean()
+    
+            return {
+                     "l2_loss": l2_loss,
+                     "lpips_loss": lpips_loss
+                   }
+
+    class FacialLossRegister(LossRegisterBase):
+        def forward(self, 
+                    x, 
+                    y,
+                    mask,
+                    weights_all,
+                    weights,
+                    x_pre = None,
+                    y_pre = None
+                   ):
+            l2_loss = self.l2(x, y) * weights_all
+            lpips_loss = self.lpips(x,y, is_reduce = False) * weights
+            fp_loss = self.fp(x, y, mask)    
+            inter_frame_loss = torch.zeros_like(lpips_loss)
+            id_loss = self.id_loss(x, y) * 0.0
+            ret = {
+                     "l2_loss": l2_loss,
+                     "lpips_loss": lpips_loss,
+                     "fp_loss": fp_loss,
+                     "id_loss": id_loss,
+                   }
+
+            if x_pre is not None and y_pre is not None:
+                inter_frame_loss = self.if_loss(
+                                                x,
+                                                x_pre, 
+                                                y,
+                                                y_pre,
+                                                self.lpips
+                                               ) * 2.0 * weights_all
+                ret["diff_frame_loss"] = inter_frame_loss
+
+            return ret
+
+    pose_loss_register = PoseLossRegister(config_pose)
+    facial_loss_register = FacialLossRegister(config_facial)
+
     gammas = None
     images_tensor_last = None
     gt_images_tensor_last = None
@@ -628,14 +714,19 @@ def expressive_encoding_pipeline(
     logger.info(f"optimized_latents {optimized_latents}")
     start_idx = len(optimized_latents)
 
-    for ii, _file in enumerate(gen_file_list):
-        if start_idx >= ii:
-            logger.info(f"current index is {ii}")
-            ii = start_idx
+    gen_length = len(gen_file_list) if not DEBUG else 100
+    gen_file_list = gen_file_list[:gen_length]
+    pbar = tqdm(gen_file_list)
+
+    for ii, _file in enumerate(pbar):
+        if ii < start_idx:
+            logger.info(f"{ii} processed, pass...")
+            continue
 
         if ii >= len(gen_file_list):
             logger.info("all file optimized, skip to pti.")
             break
+
 
         gen_image = cv2.imread(_file)
         assert gen_image is not None, "file not exits, please check."
@@ -643,6 +734,8 @@ def expressive_encoding_pipeline(
 
         # stage 1.5 get face info
         face_info_from_gen = get_face_info(gen_image, detector)
+        logger.info("get face info.")
+
         # stage 2.
         w_with_pose, image_posed = pose_optimization(
                            selected_id_latent,
@@ -651,17 +744,20 @@ def expressive_encoding_pipeline(
                            face_info_from_gen,
                            face_info_from_id,
                            G,
-                           config_pose
+                           pose_edit,
+                           pose_loss_register
                          )
-        image_posed = cv2.cvtColor(image_posed, cv2.COLOR_RGB2BGR)
         torch.save(w_with_pose, os.path.join(stage_two_path, f"{ii+1}.pt"))       
-        cv2.imwrite(os.path.join(stage_two_path, f"{ii+1}_pose.png"), image_posed[...,::-1])
+        if DEBUG:
+            image_posed = cv2.cvtColor(image_posed, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(os.path.join(stage_two_path, f"{ii+1}_pose.png"), image_posed * 255.0)
+        logger.info("pose optimized..")
         # stage 3.
         style_space_latent, images_tensor_last, gt_images_tensor_last, gammas, image_gen = \
                 facial_attribute_optimization(w_with_pose, \
                                               gen_image,\
                                               face_info_from_gen,\
-                                              config_facial,\
+                                              facial_loss_register, \
                                               ss_decoder,\
                                               gammas,\
                                               images_tensor_last,\
@@ -669,7 +765,10 @@ def expressive_encoding_pipeline(
                                              )
         
         torch.save(style_space_latent, os.path.join(stage_three_path, f"{ii+1}.pt"))       
-        cv2.imwrite(os.path.join(stage_three_path, f"{ii+1}_facial.png"), image_gen[...,::-1])
+        if DEBUG:
+            image_gen = cv2.cvtColor(image_gen, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(os.path.join(stage_three_path, f"{ii+1}_facial.png"), image_gen[...,::-1])
+        logger.info("facial optimized..")
 
     # stage 4.
     snapshots = os.path.join(stage_four_path, "snapshots")
@@ -682,6 +781,16 @@ def expressive_encoding_pipeline(
                                            writer = writer
                                           )
     logger.info(f"latest model path is {latest_decoder_path}")
-    # inference.
-    
+
+    validate_video_path = os.path.join(save_path, "validate_video.mp4")
+
+    validate_video_gen(
+                        validate_video_path,
+                        latest_decoder_path,
+                        ss_decoder,
+                        len(gen_files_list)
+                      )
+    logger.info(f"validate video located in {validate_video_path}")
+
+
 

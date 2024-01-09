@@ -1,24 +1,23 @@
-import numpy as np
 import shutil
 import PIL
 import cv2
 import imageio
-# import torchlm
-import os
-# from torchlm.tools import faceboxesv2
-# from torchlm.models import pipnet
-import mediapipe as mp
-import click
-from pathlib import Path
-import os.path as osp
 import scipy
-from scipy.ndimage import gaussian_filter1d
+import os
+import click
 
+import mediapipe as mp
+import os.path as osp
+import numpy as np
+
+from pathlib import Path
+from scipy.ndimage import gaussian_filter1d
+from tqdm import tqdm
+from DeepLog import logger
 
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 mp_face_mesh = mp.solutions.face_mesh
-
 
 th_list = [
     0, 11, 12, 13, 14, 15, 16, 17, 37, 38, 39, 40, 41, 42, 61, 62, 72, 73, 74, 76, 77, 78, 80, 81, 82, 84, 85, 86, 87,
@@ -34,15 +33,13 @@ left_eye3 = [226,113,225,224,223,222,221,189,244,233,232,231,230,229,228,31]
 right_eye = [382,381,380,477,374,373,390,249,263,466,388,387,386,475,385,384,398,362,473,474,476]
 right_eye2 = [463,341,256,252,253,254,339,255,359,467,260,259,257,258,286,414,]
 right_eye3 = [464,453,452,451,450,449,448,261,446,342,445,444,443,442,441,413]
-# def crop():
-@click.command()
-@click.option('--in_dir', help = 'input path')
-@click.option('--out_dir', help = 'output path')
-@click.option('--use_first_eye_to_mouth', help = 'use_first_eye_to_mouth',default = True)
-@click.option('--sigam', help = 'smooth sigam',default = 2)
-def crop(in_dir, out_dir, use_first_eye_to_mouth,sigam):
-    os.makedirs(out_dir, exist_ok = True)
 
+def crop(in_dir: str, 
+         out_dir: str, 
+         use_first_eye_to_mouth: bool = True,
+         sigam: int = 2):
+
+    os.makedirs(out_dir, exist_ok = True)
     dst_npy = f'{out_dir}/smooth_M.npy'
     out_faces = f'{out_dir}/smooth'
     Path(out_faces).mkdir(parents=True,exist_ok=True)
@@ -57,7 +54,9 @@ def crop(in_dir, out_dir, use_first_eye_to_mouth,sigam):
     left_eye_dis = None
     right_eye_dis = None
     quads = []
-    for i, p in enumerate(filenames):
+    pbar_files = tqdm(filenames)
+
+    for i, p in enumerate(pbar_files):
         img_idx += 1
         #if img_idx >=100:
         #    break
@@ -69,7 +68,7 @@ def crop(in_dir, out_dir, use_first_eye_to_mouth,sigam):
             image = p
             out_file = osp.join(out_faces, f"{img_idx}.png")
         if Path(out_file).exists():
-            print('pass')
+            logger.info('pass')
             continue
         h,w = image.shape[:2]
         with mp_face_mesh.FaceMesh(static_image_mode=True,max_num_faces=1,refine_landmarks=True,min_detection_confidence=0.5) as face_mesh:
@@ -139,8 +138,6 @@ def crop(in_dir, out_dir, use_first_eye_to_mouth,sigam):
                     e_to_mouth = eye_to_mouth
                 else:
                     eye_to_mouth = e_to_mouth
-
-            #
             rotate_level = True
             # Choose oriented crop rectangle.
             if rotate_level:
@@ -154,8 +151,10 @@ def crop(in_dir, out_dir, use_first_eye_to_mouth,sigam):
                 x *= max(np.hypot(*eye_to_eye) * 2.0, np.hypot(*eye_to_mouth) * 1.8)
                 y = np.flipud(x) * [-1, 1]
                 c0 = eye_avg + eye_to_mouth * 0.1
-
-            img = PIL.Image.open(src_file)
+            if isinstance(p, str):
+                img = PIL.Image.open(src_file)
+            else:
+                img = PIL.Image.fromarray(image)
 
             quad = np.stack([c0 - x - y, c0 - x + y, c0 + x + y, c0 + x - y])
             qsize = np.hypot(*x) * 2
@@ -178,7 +177,7 @@ def crop(in_dir, out_dir, use_first_eye_to_mouth,sigam):
                 else:
                     # rejected N times, give up and move to next image
                     # (does not happen in practice with the FFHQ data)
-                    print('rejected image')
+                    logger.info('rejected image')
 
             # # Shrink.
             output_size = 512
@@ -226,22 +225,33 @@ def crop(in_dir, out_dir, use_first_eye_to_mouth,sigam):
     src_points = np.float32(
             [[0, 0], [0, transform_size -  1], [transform_size -  1, transform_size -  1], [transform_size -  1, 0]])
     # dst_quad = np.float32(np.array(src_quads) + 0.5)
-    print("getting smoothed M and faces ...")
+    logger.info("getting smoothed M and faces ...")
     M_smooth = []
-    for i in range(len(smoothed_src_quads)):
-        src_file = osp.join(in_dir, filenames[i])
-        out_file = osp.join(out_faces, filenames[i])
-        img = cv2.imread(src_file)
+    
+    pbar_smooth = tqdm(range(len(smoothed_src_quads))) 
+    filenames.set_image_index(0)
+    for i, img in enumerate(pbar_files):
+        out_file = osp.join(out_faces, f'{i}.png')
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         m = cv2.getPerspectiveTransform((smoothed_src_quads[i].astype(np.float32)+0.5), src_points)
         face = cv2.warpPerspective(img, m, (512, 512), flags=cv2.INTER_CUBIC)
         cv2.imwrite(out_file, face)
         M_smooth.append(m.reshape(1, 3, 3))
-
     M_smooth = np.concatenate(M_smooth, axis=0)
-
     np.save(dst_npy, M_smooth)
 
 
+@click.command()
+@click.option('--in_dir', help = 'input path')
+@click.option('--out_dir', help = 'output path')
+@click.option('--use_first_eye_to_mouth', help = 'use_first_eye_to_mouth',default = True)
+@click.option('--sigam', help = 'smooth sigam',default = 2)
+def main(in_dir: str, 
+         out_dir: str, 
+         use_first_eye_to_mouth: bool = True,
+         sigam: int = 2):
+    crop(in_dir, out_dir, use_first_eye_to_mouth, sigma)
+
 if __name__=='__main__':
-    crop()
+    main()
 

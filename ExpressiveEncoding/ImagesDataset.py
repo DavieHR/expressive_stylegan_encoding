@@ -5,6 +5,7 @@ from torch.utils.data import Dataset
 from PIL import Image
 from .utils import make_dataset
 
+DEBUG = os.environ.get("DEBUG", 0)
 
 class ImagesDataset(Dataset):
 
@@ -17,6 +18,8 @@ class ImagesDataset(Dataset):
         self.source_transform = source_transform
 
     def __len__(self):
+        if DEBUG:
+            return 100
         return len(self.source_paths)
 
     def __getitem__(self, index):
