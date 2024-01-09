@@ -9,6 +9,8 @@
 *.pth
 *.swp
 *.swo
+tags
+
 # soft link
 codes
 
@@ -18,5 +20,8 @@ __pycache__/
 src/
 tensorboard/
 models/
+
 # temp file.
 results
+
+error.txt

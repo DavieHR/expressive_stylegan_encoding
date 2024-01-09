@@ -45,6 +45,18 @@ VERBOSE = True if VERBOSE in [True, 'True', 'TRUE', 'true', 1] else False
 if VERBOSE or DEBUG:
     logger.setLevel(logging.DEBUG)
 
+def getBack(var_grad_fn):
+    logger.info(var_grad_fn)
+    for n in var_grad_fn.next_functions:
+        if n[0]:
+            try:
+                tensor = getattr(n[0], 'variable')
+                logger.info(n[0])
+                logger.info(f'Tensor with grad found: {tensor}')
+                logger.info(f' - gradient: {tensor.grad}\n')
+            except AttributeError as e:
+                getBack(n[0])
+
 def get_face_info(
                   image: np.ndarray,
                   detector: object
@@ -127,7 +139,6 @@ def pose_optimization(
     if VERBOSE:
         t = Timer()
 
-
     h,w = ground_truth.shape[:2]
 
     id_image = np.float32(id_image / 255.0)
@@ -155,15 +166,15 @@ def pose_optimization(
     mask_gt_tensor = to_tensor(mask_gt).to("cuda")
     mask_id_tensor = to_tensor(mask_id).to("cuda")
 
-
     gt_tensor = to_tensor(ground_truth).to("cuda")
     id_tensor = to_tensor(id_image).to("cuda")
 
     gt_tensor = 2 * (gt_tensor -  0.5)
     id_tensor = 2 * (id_tensor -  0.5)
 
-
     epochs = kwargs.get("epochs", 100)
+    if DEBUG:
+        epochs = 10
     yaw, pitch = res_id.yaw, res_id.pitch
     id_zflow = pose_edit(latent_id, yaw, pitch)
     
@@ -175,6 +186,8 @@ def pose_optimization(
 
     if VERBOSE:
         t.tic("optimize pose")
+    
+
     for epoch in range(1, epochs + 1):
         w =  pose_edit(id_zflow, 
                        yaw_to_optim,
@@ -213,6 +226,10 @@ def facial_attribute_optimization(
     ground_truth = np.float32(ground_truth / 255.0)
     gt_image_tensor = to_tensor(ground_truth).to("cuda")
     gt_image_tensor = (gt_image_tensor - 0.5) * 2
+
+    if images_tensor_last is not None and gt_images_tensor_last is not None:
+        images_tensor_last.requires_grad = False
+        gt_images_tensor_last.requires_grad = False
 
     alpha_indexes = [
                      6, 11, 8, 14, 15, # represent Mouth
@@ -408,8 +425,9 @@ def facial_attribute_optimization(
         weights_all[-1] = 0.0
     weights = torch.ones(region_num).to(dlatents[0])
     weights[-1] = 0.0
-
     epochs = kwargs.get("epochs", 100)
+    if DEBUG:
+        epochs = 10
 
     if VERBOSE:
         t.tic("facial optimize..")
@@ -417,18 +435,14 @@ def facial_attribute_optimization(
     for epoch in range(1, epochs + 1):
         if VERBOSE:
             t.tic("one epoch")
-        if VERBOSE:
             t.tic("masked dlatent")
         dlatents_tmp = get_masked_dlatent_in_region(alpha_tensor)
         if VERBOSE:
             t.toc("masked dlatent")
-
-        if VERBOSE:
             t.tic("ss decoder")
         images_tensor = ss_decoder(dlatents_tmp)
         if VERBOSE:
             t.toc("ss decoder")
-        if VERBOSE:
             t.tic("loss")
         ret = loss_register(
                             images_tensor, 
@@ -442,21 +456,21 @@ def facial_attribute_optimization(
                            )
         if VERBOSE:
             t.toc("loss")
-        if VERBOSE:
             t.tic("optim")
         loss = ret["loss"]
         for j in range(region_num):
             optim.zero_grad()
             loss[j].backward(retain_graph = True)
+            if epoch == 0:
+                getBack(loss[j].grad_fn)
+                logger.info(f"......... end loss {j}..............")
             optim.step()
         if VERBOSE:
             t.toc("optim")
-        if VERBOSE:
             t.tic("sche")
         sche.step()
         if VERBOSE:
             t.toc("sche")
-        if VERBOSE:
             t.toc("one epoch")
         if DEBUG and epoch % 10 == 0:
             string_to_info = reduce(lambda x, y: x + ', ' + y , [f'{k} {v.mean().item()}' for k, v in ret.items()])
@@ -476,14 +490,13 @@ def facial_attribute_optimization(
 
     if VERBOSE:
         t.toc("facial optimize..")
-
     with torch.no_grad():
         dlatents_all = update_alpha()
         image_tensor_after_update_all = ss_decoder(dlatents_all) 
     image_gen = (from_tensor(image_tensor_after_update_all) * 0.5 + 0.5) * 255.0
     return dlatents_all,\
-           images_tensor,\
-           gt_images_tensor,\
+           images_tensor.detach(),\
+           gt_images_tensor.detach(),\
            gammas, \
            image_gen
 
@@ -599,11 +612,11 @@ def expressive_encoding_pipeline(
         face_folder_path = video_path
     else:
         face_folder_path = os.path.join(save_path, "data")
-        face_folder_path = os.path.join(face_folder_path, "smooth")
         if not os.path.exists(face_folder_path):
             crop(video_path,face_folder_path)
         else:
             logger.info("re-used last processed data.")
+        face_folder_path = os.path.join(face_folder_path, "smooth")
 
     assert len(os.listdir(face_folder_path)) > 1, "face files not exists."
 
@@ -688,7 +701,6 @@ def expressive_encoding_pipeline(
                      "fp_loss": fp_loss,
                      "id_loss": id_loss,
                    }
-
             if x_pre is not None and y_pre is not None:
                 inter_frame_loss = self.if_loss(
                                                 x,
@@ -713,6 +725,12 @@ def expressive_encoding_pipeline(
     optimized_latents = list(filter(lambda x: x.endswith('pt'), os.listdir(stage_three_path)))
     logger.info(f"optimized_latents {optimized_latents}")
     start_idx = len(optimized_latents)
+    if start_idx > 0:
+        last_tensor_path = os.path.join(stage_three_path, "last_tensor.pt")
+        if not os.path.exists(last_tensor_path):
+            logger.warn("last tensor not exits, this may harm video stable....")
+        else:
+            images_tensor_last, gt_images_tensor_last = torch.load(last_tensor_path)
 
     gen_length = len(gen_file_list) if not DEBUG else 100
     gen_file_list = gen_file_list[:gen_length]
@@ -727,7 +745,6 @@ def expressive_encoding_pipeline(
             logger.info("all file optimized, skip to pti.")
             break
 
-
         gen_image = cv2.imread(_file)
         assert gen_image is not None, "file not exits, please check."
         gen_image = cv2.cvtColor(gen_image, cv2.COLOR_BGR2RGB)
@@ -736,7 +753,7 @@ def expressive_encoding_pipeline(
         face_info_from_gen = get_face_info(gen_image, detector)
         logger.info("get face info.")
 
-        # stage 2.
+        #stage 2.
         w_with_pose, image_posed = pose_optimization(
                            selected_id_latent,
                            np.uint8(selected_id_image),
@@ -764,7 +781,8 @@ def expressive_encoding_pipeline(
                                               gt_images_tensor_last \
                                              )
         
-        torch.save(style_space_latent, os.path.join(stage_three_path, f"{ii+1}.pt"))       
+        torch.save([x.detach() for x in style_space_latent], os.path.join(stage_three_path, f"{ii+1}.pt"))       
+        torch.save([images_tensor_last, gt_images_tensor_last], os.path.join(stage_three_path, "last_tensor.pt"))
         if DEBUG:
             image_gen = cv2.cvtColor(image_gen, cv2.COLOR_RGB2BGR)
             cv2.imwrite(os.path.join(stage_three_path, f"{ii+1}_facial.png"), image_gen[...,::-1])
@@ -791,6 +809,4 @@ def expressive_encoding_pipeline(
                         len(gen_files_list)
                       )
     logger.info(f"validate video located in {validate_video_path}")
-
-
 
