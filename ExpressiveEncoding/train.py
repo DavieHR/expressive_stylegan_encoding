@@ -149,10 +149,6 @@ def pose_optimization(
     points_gt = np.array([landmarks_gt[x[0],:] for x in points]).astype(np.int32)
     mask_gt = cv2.fillPoly(mask_gt, np.int32([points_gt]), (1,1,1))
 
-    mask_id = np.zeros((h,w,1))
-    landmarks_id = np.int32(res_id.landmarks)
-    points_id = np.array([landmarks_id[x[0],:] for x in points]).astype(np.int32)
-    mask_id = cv2.fillPoly(mask_id, np.int32([points_id]), (1,1,1))
 
     pad = 50
     mask_facial = np.ones((1024,1024,1), dtype = np.float32)
@@ -161,22 +157,18 @@ def pose_optimization(
     mask_facial[620 + pad:908 - pad, 368 + pad: 656 - pad] = 0
 
     mask_gt = mask_gt * mask_facial
-    mask_id = mask_id * mask_facial
-
     mask_gt_tensor = to_tensor(mask_gt).to("cuda")
-    mask_id_tensor = to_tensor(mask_id).to("cuda")
-
     gt_tensor = to_tensor(ground_truth).to("cuda")
-    id_tensor = to_tensor(id_image).to("cuda")
-
     gt_tensor = 2 * (gt_tensor -  0.5)
-    id_tensor = 2 * (id_tensor -  0.5)
+
+    gt_tensor.requires_grad = False
 
     epochs = kwargs.get("epochs", 100)
     if DEBUG:
         epochs = 10
     yaw, pitch = res_id.yaw, res_id.pitch
-    id_zflow = pose_edit(latent_id, yaw, pitch)
+    with torch.no_grad():
+        id_zflow = pose_edit(latent_id, yaw, pitch)
     
     yaw_to_optim = torch.from_numpy(np.array([0.0])).type(torch.FloatTensor).to("cuda")
     yaw_to_optim.requires_grad = True
@@ -195,7 +187,7 @@ def pose_optimization(
                        True)
         gen_tensor = G(w)
         optim.zero_grad()
-        ret = loss_register(mask_id_tensor * gen_tensor, mask_gt_tensor * gt_tensor)
+        ret = loss_register(mask_gt_tensor * gen_tensor, mask_gt_tensor * gt_tensor)
         optim.step()
 
     if VERBOSE:
@@ -425,6 +417,10 @@ def facial_attribute_optimization(
         weights_all[-1] = 0.0
     weights = torch.ones(region_num).to(dlatents[0])
     weights[-1] = 0.0
+
+    weights_all.requires_grad = False
+    weights.requires_grad = False
+    masks_oval_gt.requires_grad = False
     epochs = kwargs.get("epochs", 100)
     if DEBUG:
         epochs = 10
@@ -433,15 +429,15 @@ def facial_attribute_optimization(
         t.tic("facial optimize..")
 
     for epoch in range(1, epochs + 1):
-        if VERBOSE:
+        if DEBUG:
             t.tic("one epoch")
             t.tic("masked dlatent")
         dlatents_tmp = get_masked_dlatent_in_region(alpha_tensor)
-        if VERBOSE:
+        if DEBUG:
             t.toc("masked dlatent")
             t.tic("ss decoder")
         images_tensor = ss_decoder(dlatents_tmp)
-        if VERBOSE:
+        if DEBUG:
             t.toc("ss decoder")
             t.tic("loss")
         ret = loss_register(
@@ -454,7 +450,7 @@ def facial_attribute_optimization(
                             x_pre = images_tensor_last,
                             y_pre = gt_images_tensor_last
                            )
-        if VERBOSE:
+        if DEBUG:
             t.toc("loss")
             t.tic("optim")
         loss = ret["loss"]
@@ -465,11 +461,11 @@ def facial_attribute_optimization(
                 getBack(loss[j].grad_fn)
                 logger.info(f"......... end loss {j}..............")
             optim.step()
-        if VERBOSE:
+        if DEBUG:
             t.toc("optim")
             t.tic("sche")
         sche.step()
-        if VERBOSE:
+        if DEBUG:
             t.toc("sche")
             t.toc("one epoch")
         if DEBUG and epoch % 10 == 0:
@@ -582,7 +578,7 @@ def validate_video_gen(
     with imageio.get_writer(save_video_path, fps = 25) as writer:
         for index in tqdm(range(video_length)):
             style_space_latent = torch.load(os.path.join(latent_folder, f"{index+1}.pt"))
-            image = from_tensor(ss_decoder(style_space_latent) * 0.5 + 0.5) * 255.0
+            image = np.uint8(from_tensor(ss_decoder(style_space_latent) * 0.5 + 0.5) * 255.0)
             writer.append_data(image)
 
 def expressive_encoding_pipeline(
@@ -604,7 +600,6 @@ def expressive_encoding_pipeline(
 
     with open(os.path.join(config_path, "config.yaml")) as f:
         basis_config = edict(yaml.load(f, Loader = yaml.CLoader))
-
     
     video_path = basis_config.path
 
@@ -790,23 +785,27 @@ def expressive_encoding_pipeline(
 
     # stage 4.
     snapshots = os.path.join(stage_four_path, "snapshots")
-    os.makedirs(snapshots, exist_ok = True)
-    latest_decoder_path = pivot_finetuning(face_folder_path, \
-                                           stage_three_path, \
-                                           snapshots, \
-                                           ss_decoder, \
-                                           config_pti, \
-                                           writer = writer
-                                          )
+    if os.path.exists(snapshots):
+        snapshot_paths = sorted(os.listdir(snapshots), key = lambda x: int(x.split('.')[0]))
+        latest_decoder_path = os.path.join(snapshots, snapshot_paths[-1])
+    else:
+        os.makedirs(snapshots, exist_ok = True)
+        latest_decoder_path = pivot_finetuning(face_folder_path, \
+                                               stage_three_path, \
+                                               snapshots, \
+                                               ss_decoder, \
+                                               config_pti, \
+                                               writer = writer
+                                              )
     logger.info(f"latest model path is {latest_decoder_path}")
 
     validate_video_path = os.path.join(save_path, "validate_video.mp4")
-
     validate_video_gen(
                         validate_video_path,
                         latest_decoder_path,
+                        stage_three_path,
                         ss_decoder,
-                        len(gen_files_list)
+                        len(gen_file_list)
                       )
     logger.info(f"validate video located in {validate_video_path}")
 

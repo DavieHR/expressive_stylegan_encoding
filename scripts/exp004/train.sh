@@ -6,10 +6,10 @@ username=`whoami`
 
 mkdir -p results
 
-
 function main
 {   
-    CUDA_VISIBLE_DEVICES=3 python -m ExpressiveEncoding \
+    VERBOSE=True \
+    CUDA_VISIBLE_DEVICES=7 python -m ExpressiveEncoding \
                            --config_path ./scripts/${exp_name} \
                            --save_path ./results/${exp_name}
 }
