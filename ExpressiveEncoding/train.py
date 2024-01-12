@@ -149,7 +149,6 @@ def pose_optimization(
     points_gt = np.array([landmarks_gt[x[0],:] for x in points]).astype(np.int32)
     mask_gt = cv2.fillPoly(mask_gt, np.int32([points_gt]), (1,1,1))
 
-
     pad = 50
     mask_facial = np.ones((1024,1024,1), dtype = np.float32)
     mask_facial[310 + pad:556 - pad, 258 + pad: 484 - pad] = 0
@@ -160,8 +159,8 @@ def pose_optimization(
     mask_gt_tensor = to_tensor(mask_gt).to("cuda")
     gt_tensor = to_tensor(ground_truth).to("cuda")
     gt_tensor = 2 * (gt_tensor -  0.5)
-
     gt_tensor.requires_grad = False
+    mask_gt_tensor.requires_grad = False
 
     epochs = kwargs.get("epochs", 100)
     if DEBUG:
@@ -170,28 +169,31 @@ def pose_optimization(
     with torch.no_grad():
         id_zflow = pose_edit(latent_id, yaw, pitch)
     
-    yaw_to_optim = torch.from_numpy(np.array([0.0])).type(torch.FloatTensor).to("cuda")
+    yaw_to_optim = torch.tensor([0.0]).type(torch.FloatTensor).to("cuda")#torch.from_numpy(np.array([0.0])).type(torch.FloatTensor).to("cuda")
     yaw_to_optim.requires_grad = True
-    pitch_to_optim = torch.from_numpy(np.array([0.0])).type(torch.FloatTensor).to("cuda")
+    pitch_to_optim = torch.tensor([0.0]).type(torch.FloatTensor).to("cuda")#torch.from_numpy(np.array([0.0])).type(torch.FloatTensor).to("cuda")
     pitch_to_optim.requires_grad = True
     optim = torch.optim.Adam([yaw_to_optim, pitch_to_optim], lr = 1)
-
     if VERBOSE:
         t.tic("optimize pose")
-    
 
     for epoch in range(1, epochs + 1):
-        w =  pose_edit(id_zflow, 
+        
+        w = pose_edit(id_zflow, 
                        yaw_to_optim,
                        pitch_to_optim,
                        True)
         gen_tensor = G(w)
         optim.zero_grad()
-        ret = loss_register(mask_gt_tensor * gen_tensor, mask_gt_tensor * gt_tensor)
+        ret = loss_register(mask_gt_tensor * gen_tensor, mask_gt_tensor * gt_tensor, is_gradient = False)
+        ret['loss'].backward(retain_graph = True)
         optim.step()
 
     if VERBOSE:
         t.toc("optimize pose")
+    # reset pose edit latent 
+    # to avoid the gradient accumulation.
+    pose_edit.reset()
     return w, from_tensor(gen_tensor) * 0.5 + 0.5
 
 # Stage III: facial attribute optimized
@@ -454,13 +456,10 @@ def facial_attribute_optimization(
             t.toc("loss")
             t.tic("optim")
         loss = ret["loss"]
-        for j in range(region_num):
-            optim.zero_grad()
-            loss[j].backward(retain_graph = True)
-            if epoch == 0:
-                getBack(loss[j].grad_fn)
-                logger.info(f"......... end loss {j}..............")
-            optim.step()
+        optim.zero_grad()
+        gradient_value = torch.Tensor([1.] * region_num).to(loss)
+        loss.backward(gradient = gradient_value,retain_graph = True)
+        optim.step()
         if DEBUG:
             t.toc("optim")
             t.tic("sche")
@@ -750,7 +749,7 @@ def expressive_encoding_pipeline(
 
         #stage 2.
         w_with_pose, image_posed = pose_optimization(
-                           selected_id_latent,
+                           selected_id_latent.detach(),
                            np.uint8(selected_id_image),
                            gen_image,
                            face_info_from_gen,
@@ -764,6 +763,7 @@ def expressive_encoding_pipeline(
             image_posed = cv2.cvtColor(image_posed, cv2.COLOR_RGB2BGR)
             cv2.imwrite(os.path.join(stage_two_path, f"{ii+1}_pose.png"), image_posed * 255.0)
         logger.info("pose optimized..")
+
         # stage 3.
         style_space_latent, images_tensor_last, gt_images_tensor_last, gammas, image_gen = \
                 facial_attribute_optimization(w_with_pose, \

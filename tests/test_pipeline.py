@@ -86,7 +86,10 @@ def test_pose():
 def test_facial_attribute():
     
     from copy import deepcopy
-    from ExpressiveEncoding.train import load_model, torch, get_detector, yaml, edict, stylegan_path, from_tensor, StyleSpaceDecoder
+    from ExpressiveEncoding.train import load_model, torch, get_detector, \
+                                         yaml, edict, stylegan_path, \
+                                         from_tensor, StyleSpaceDecoder, \
+                                         LossRegisterBase
     detector = get_detector()
     G = load_model(stylegan_path).synthesis
     ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))
@@ -104,11 +107,45 @@ def test_facial_attribute():
                                         detector
                                       )
 
+    class FacialLossRegister(LossRegisterBase):
+        def forward(self, 
+                    x, 
+                    y,
+                    mask,
+                    weights_all,
+                    weights,
+                    x_pre = None,
+                    y_pre = None
+                   ):
+            l2_loss = self.l2(x, y) * weights_all
+            lpips_loss = self.lpips(x,y, is_reduce = False) * weights
+            fp_loss = self.fp(x, y, mask)    
+            inter_frame_loss = torch.zeros_like(lpips_loss)
+            id_loss = self.id_loss(x, y) * 0.0
+            ret = {
+                     "l2_loss": l2_loss,
+                     "lpips_loss": lpips_loss,
+                     "fp_loss": fp_loss,
+                     "id_loss": id_loss,
+                   }
+            if x_pre is not None and y_pre is not None:
+                inter_frame_loss = self.if_loss(
+                                                x,
+                                                x_pre, 
+                                                y,
+                                                y_pre,
+                                                self.lpips
+                                               ) * 2.0 * weights_all
+                ret["diff_frame_loss"] = inter_frame_loss
+
+            return ret
+
+    loss_register = FacialLossRegister(config_facial)
     dlatents_all, images_tensor, gt_images_tensor, gammas, image_gen = facial_attribute_optimization( \
                                                                                                      id_latent, \
                                                                                                      gen_image, \
                                                                                                      face_info_from_gen, \
-                                                                                                     config_facial, \
+                                                                                                     loss_register, \
                                                                                                      ss_decoder \
                                                                                                     ) 
     cv2.imwrite("./tests/facial.png", image_gen[...,::-1])

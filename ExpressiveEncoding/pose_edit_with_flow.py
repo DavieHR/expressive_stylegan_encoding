@@ -18,8 +18,12 @@ class PoseEdit:
         self.cnf.to("cuda:0")
         for p in self.cnf.parameters():
             p.requires_grad = False
+        self.reset()
+
+    def reset(self):
         self.zflow = self._get_attribute_zflow()
-    
+        self.zflow.requires_grad = False   
+
     def _get_attribute_zflow(self):
         
         light_zflow = np.zeros((1,9,1,1), dtype = np.float32) 
