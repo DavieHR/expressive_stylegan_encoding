@@ -1,6 +1,5 @@
 # files
 
-*.mp4
 *.pgm
 *.png
 *.jpg
@@ -11,6 +10,10 @@
 *.swo
 tags
 
+ExpressiveEncoding/FaceToolsBox/*.mp4
+tests/*.mp4
+                        
+
 # soft link
 codes
 
@@ -20,8 +23,10 @@ __pycache__/
 src/
 tensorboard/
 models/
+video/
 
 # temp file.
 results
-
 error.txt
+
+
