@@ -38,7 +38,8 @@ points = [(10, 338),(338, 297),(297, 332),
 where_am_i = os.path.dirname(os.path.realpath(__file__))
 stylegan_path = os.path.join(where_am_i, "third_party/models/stylegan2_ffhq.pkl")
 e4e_path = os.path.join(where_am_i, "third_party/models/e4e_ffhq_encode.pt")
-DEBUG = int(os.environ.get("DEBUG", 0))
+DEBUG = os.environ.get("DEBUG", 0)
+DEBUG = True if DEBUG in [True, 'True', 'TRUE', 'true', 1] else False
 VERBOSE = os.environ.get("VERBOSE", False)
 VERBOSE = True if VERBOSE in [True, 'True', 'TRUE', 'true', 1] else False
 
@@ -162,9 +163,7 @@ def pose_optimization(
     gt_tensor.requires_grad = False
     mask_gt_tensor.requires_grad = False
 
-    epochs = kwargs.get("epochs", 100)
-    if DEBUG:
-        epochs = 10
+    epochs = kwargs.get("epochs", 50)
     yaw, pitch = res_id.yaw, res_id.pitch
     with torch.no_grad():
         id_zflow = pose_edit(latent_id, yaw, pitch)
@@ -208,7 +207,7 @@ def facial_attribute_optimization(
                                   gt_images_tensor_last: torch.Tensor = None,
                                   **kwargs
                                  ):
-    if VERBOSE:
+    if VERBOSE or DEBUG:
         t = Timer()
     alpha_init = [0] * 32
     alpha_tensor = []
@@ -424,8 +423,6 @@ def facial_attribute_optimization(
     weights.requires_grad = False
     masks_oval_gt.requires_grad = False
     epochs = kwargs.get("epochs", 100)
-    if DEBUG:
-        epochs = 10
 
     if VERBOSE:
         t.tic("facial optimize..")
@@ -508,13 +505,16 @@ def pivot_finetuning(
     from torch.utils.data import DataLoader
     from .ImagesDataset import ImagesDataset
 
+
+    batchsize = kwargs.get("batchsize", 8)
+
     def get_dataloader(
                       ):
         dataset = ImagesDataset(path_images, path_style_latents, transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
             transforms.Resize(size = (1024,1024))]))
-        return DataLoader(dataset, batch_size = 1, shuffle = False)
+        return DataLoader(dataset, batch_size = batchsize, shuffle = False)
 
     class LossRegister(LossRegisterBase):
         def forward(self, 
@@ -522,8 +522,8 @@ def pivot_finetuning(
                     y
                     ):
 
-            l2 = self.l2(x,y).mean() * 10
-            lpips = self.lpips(x,y).mean()
+            l2 = self.l2(x,y)
+            lpips = self.lpips(x,y)
 
             return {
                     "l2": l2,
@@ -547,16 +547,16 @@ def pivot_finetuning(
     for epoch in epoch_pbar:
         for idx, (image, pivot) in enumerate(dataloader):
             image = image.to(device)  
-            # reduce redundant axis
-            pivot = [x[0] for x in pivot]
             image_gen = ss_decoder(pivot)
             ret = loss_register(image, image_gen, is_gradient = False)
             loss = ret['loss']
             optim.zero_grad()
-            loss.backward()
+            b = image_gen.shape[0]
+            gradient_value = torch.tensor([1.] * b).float().to(device)
+            loss.backward(gradient = gradient_value)
             optim.step()
             total_idx += 1
-            if total_idx % 20 == 0 and writer is not None:
+            if total_idx % 100 == 0 and writer is not None:
                 string_to_info = reduce(lambda x, y: x + ', ' + y , [f'{k} {v.mean().item()}' for k, v in ret.items()])
                 logger.info(f"{idx+1}/{epoch}/{epochs}: {string_to_info}")
                 image_to_show = torch.cat((image_gen, image),dim = 2)
@@ -571,14 +571,18 @@ def validate_video_gen(
                         state_dict_path: str,
                         latent_folder: str,
                         ss_decoder: Callable,
-                        video_length: int
+                        video_length: int,
+                        face_folder_path: str
                       ):
     ss_decoder.load_state_dict(torch.load(state_dict_path))
     with imageio.get_writer(save_video_path, fps = 25) as writer:
         for index in tqdm(range(video_length)):
             style_space_latent = torch.load(os.path.join(latent_folder, f"{index+1}.pt"))
             image = np.uint8(from_tensor(ss_decoder(style_space_latent) * 0.5 + 0.5) * 255.0)
-            writer.append_data(image)
+            image_gt = cv2.imread(os.path.join(face_folder_path, f'{index}.png'))[...,::-1]
+            image_gt = cv2.resize(image_gt, (1024,1024))
+            image_concat = np.concatenate((image, image_gt), axis = 0)
+            writer.append_data(image_concat)
 
 def expressive_encoding_pipeline(
                                  config_path: str,
@@ -586,7 +590,6 @@ def expressive_encoding_pipeline(
                                 ):
 
     #TODO: log generator.
-
     from copy import deepcopy
     G = load_model(stylegan_path).synthesis
     for p in G.parameters():
@@ -785,8 +788,10 @@ def expressive_encoding_pipeline(
 
     # stage 4.
     snapshots = os.path.join(stage_four_path, "snapshots")
-    if os.path.exists(snapshots):
-        snapshot_paths = sorted(os.listdir(snapshots), key = lambda x: int(x.split('.')[0]))
+    snapshot_files = os.listdir(snapshots)
+
+    if os.path.exists(snapshots) and len(snapshot_files):
+        snapshot_paths = sorted(snapshot_files, key = lambda x: int(x.split('.')[0]))
         latest_decoder_path = os.path.join(snapshots, snapshot_paths[-1])
     else:
         os.makedirs(snapshots, exist_ok = True)
@@ -805,7 +810,8 @@ def expressive_encoding_pipeline(
                         latest_decoder_path,
                         stage_three_path,
                         ss_decoder,
-                        len(gen_file_list)
+                        len(gen_file_list),
+                        face_folder_path
                       )
     logger.info(f"validate video located in {validate_video_path}")
 

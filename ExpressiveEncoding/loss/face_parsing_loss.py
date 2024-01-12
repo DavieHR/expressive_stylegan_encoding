@@ -1,12 +1,15 @@
 import os
-import torch
-from .FaceParsing.model import BiSeNet
+import sys
+where_am_i = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(where_am_i, "FaceParsing"))
 
-where_am_i = os.path.dirname(os.path.realpath(__file__)).replace("loss", "")
+import torch
+from model import BiSeNet
+
 class FaceParsingLoss(torch.nn.Module):
     def __init__(self, is_reduce = False):
         super().__init__()
-        model_path = os.path.join(where_am_i ,"third_party/models/79999_iter.pth") # absolute path.
+        model_path = os.path.join(where_am_i.replace("loss", "") ,"third_party/models/79999_iter.pth") # absolute path.
         model = BiSeNet(19)
         model.load_state_dict(torch.load(model_path))
         model.eval()

@@ -6,7 +6,7 @@ username=`whoami`
 
 mkdir -p results
 
-
+export DEBUG=True
 function main
 {
     CUDA_VISIBLE_DEVICES=4 python -m ExpressiveEncoding \

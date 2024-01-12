@@ -1,7 +1,12 @@
+import os
+import sys
+where_am_i = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(where_am_i, "encoder4editing"))
+
 import torch
 import argparse
-from .encoder4editing.models.psp import pSp
-from .encoder4editing.models.encoders.psp_encoders import Encoder4Editing
+from models.psp import pSp
+from models.encoders.psp_encoders import Encoder4Editing
 
 def get_e4e_model(checkpoint_path, device='cuda'):
     ckpt = torch.load(checkpoint_path, map_location='cpu')
