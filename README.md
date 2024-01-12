@@ -3,8 +3,8 @@
 ## Install
 
 ## Demo
+https://github.com/DavieHR/expressive_talkinghead_encoding/assets/7105818/66f1f996-e91e-47f4-910d-2302243bf7df
 
-![Demo One](https://github.com/DavieHR/expressive_talkinghead_encoding/assets/7105818/81114a9f-7fda-43c7-9774-0224f9a4f519)
 
 
 
