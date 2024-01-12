@@ -4,7 +4,11 @@
 
 ## Demo
 
-![Demo One](./assets/demo1.mp4)
+![Demo One](https://github.com/DavieHR/expressive_talkinghead_encoding/assets/7105818/81114a9f-7fda-43c7-9774-0224f9a4f519)
+
+
+
+
 
 ### re-enactment.
 
