@@ -6,7 +6,7 @@
 
 - [ ] define loss flow in yaml.
 
-- [ ] video demo.
+- [x] video demo.
 
 - [x] model file on aws server.
 
