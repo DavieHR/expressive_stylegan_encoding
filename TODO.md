@@ -6,11 +6,11 @@
 
 - [ ] define loss flow in yaml.
 
-- [ ] video demo.
+- [x] video demo.
 
-- [ x ] model file on aws server.
+- [x] model file on aws server.
 
-- [ x ] processing progress bar.
+- [x] processing progress bar.
 
 - [ ] configure log and print pretty.
 
