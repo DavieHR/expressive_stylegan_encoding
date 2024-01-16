@@ -46,6 +46,36 @@ VERBOSE = True if VERBOSE in [True, 'True', 'TRUE', 'true', 1] else False
 if VERBOSE or DEBUG:
     logger.setLevel(logging.DEBUG)
 
+alpha_indexes = [
+                 6, 11, 8, 14, 15, # represent Mouth
+                 5, 6, 8, # Chin/Jaw
+                 9, 11, 12, 14, 17, # Eyes
+                 8, 9 , 11, # Eyebrows
+                 9 # Gaze
+                ]
+
+alpha_S_indexes = [
+                    [113, 202, 214, 259, 378, 501],
+                    [6, 41, 78, 86, 313, 361, 365],
+                    [17, 387],
+                    [12],
+                    [45],
+                    [50, 505],
+                    [131],
+                    [390],
+                    [63],
+                    [257],
+                    [82, 414],
+                    [239],
+                    [28],
+                    [6, 28],
+                    [30],
+                    [320],
+                    [409]
+                  ]
+
+alphas = [(x, y) for x, y in zip(alpha_indexes, alpha_S_indexes)]
+
 def getBack(var_grad_fn):
     logger.info(var_grad_fn)
     for n in var_grad_fn.next_functions:
@@ -80,17 +110,19 @@ def get_face_info(
 
 # STAGE 1: select id latent.
 def select_id_latent(
-                     path: str,
+                     paths: dict,
                      G: object,
                      gen_path: str
                     ):
     from .loss.id_loss import IDLoss
     e4e = Encoder4EditingWrapper(e4e_path)
+
+    path = paths["driving_face_path"]
     files = [os.path.join(path, x) for x in os.listdir(path)]
     files = sorted(files, key = lambda x: int(os.path.basename(x).split('.')[0]))
+
     metric = IDLoss()
     _metric_value = torch.tensor([999.0], dtype = torch.float32).to("cuda")
-
     selected_id = 0
     selected_id_latent = None
     selected_id_image = None
@@ -103,9 +135,7 @@ def select_id_latent(
         with torch.no_grad():
             latent = e4e(image_tensor)
             gen_tensor = G(latent)
-
         value = metric(gen_tensor, image_tensor)
-
         if value < _metric_value:
             _metric_value = value
             selected_id = i
@@ -115,7 +145,7 @@ def select_id_latent(
         gen_tensor = gen_tensor * 0.5 + 0.5
         image_gen = from_tensor(gen_tensor) * 255.0
         image_gen = cv2.cvtColor(image_gen, cv2.COLOR_RGB2BGR)
-        gen_file_path = os.path.join(gen_path, f"{i}_gen.png")
+        gen_file_path = os.path.join(gen_path, f"{i}_gen.jpg")
         gen_files_list.append(gen_file_path)
         cv2.imwrite(gen_file_path, image_gen)
         
@@ -150,6 +180,11 @@ def pose_optimization(
     points_gt = np.array([landmarks_gt[x[0],:] for x in points]).astype(np.int32)
     mask_gt = cv2.fillPoly(mask_gt, np.int32([points_gt]), (1,1,1))
 
+    mask_id = np.zeros((h,w,1))
+    landmarks_id = np.int32(res_id.landmarks)
+    points_id = np.array([landmarks_id[x[0],:] for x in points]).astype(np.int32)
+    mask_id = cv2.fillPoly(mask_id, np.int32([points_id]), (1,1,1))
+
     pad = 50
     mask_facial = np.ones((1024,1024,1), dtype = np.float32)
     mask_facial[310 + pad:556 - pad, 258 + pad: 484 - pad] = 0
@@ -158,6 +193,9 @@ def pose_optimization(
 
     mask_gt = mask_gt * mask_facial
     mask_gt_tensor = to_tensor(mask_gt).to("cuda")
+    mask_id = mask_id * mask_facial
+    mask_id_tensor = to_tensor(mask_id).to("cuda")
+
     gt_tensor = to_tensor(ground_truth).to("cuda")
     gt_tensor = 2 * (gt_tensor -  0.5)
     gt_tensor.requires_grad = False
@@ -184,7 +222,7 @@ def pose_optimization(
                        True)
         gen_tensor = G(w)
         optim.zero_grad()
-        ret = loss_register(mask_gt_tensor * gen_tensor, mask_gt_tensor * gt_tensor, is_gradient = False)
+        ret = loss_register(mask_id_tensor * gen_tensor, mask_gt_tensor * gt_tensor, is_gradient = False)
         ret['loss'].backward(retain_graph = True)
         optim.step()
 
@@ -193,7 +231,7 @@ def pose_optimization(
     # reset pose edit latent 
     # to avoid the gradient accumulation.
     pose_edit.reset()
-    return w, from_tensor(gen_tensor) * 0.5 + 0.5
+    return w, from_tensor(gen_tensor) * 0.5 + 0.5, torch.cat((yaw_to_optim, pitch_to_optim), dim = 0)
 
 # Stage III: facial attribute optimized
 def facial_attribute_optimization(    
@@ -224,35 +262,6 @@ def facial_attribute_optimization(
         images_tensor_last.requires_grad = False
         gt_images_tensor_last.requires_grad = False
 
-    alpha_indexes = [
-                     6, 11, 8, 14, 15, # represent Mouth
-                     5, 6, 8, # Chin/Jaw
-                     9, 11, 12, 14, 17, # Eyes
-                     8, 9 , 11, # Eyebrows
-                     9 # Gaze
-                    ]
-    
-    alpha_S_indexes = [
-                        [113, 202, 214, 259, 378, 501],
-                        [6, 41, 78, 86, 313, 361, 365],
-                        [17, 387],
-                        [12],
-                        [45],
-                        [50, 505],
-                        [131],
-                        [390],
-                        [63],
-                        [257],
-                        [82, 414],
-                        [239],
-                        [28],
-                        [6, 28],
-                        [30],
-                        [320],
-                        [409]
-                      ]
-    
-    alphas = [(x, y) for x, y in zip(alpha_indexes, alpha_S_indexes)]
     
     alphas_split_into_region = dict(
                                      lips = alphas[:5],    #[alpha if alpha[0] in alpha_indexes[:5] else [] for alpha in alphas],
@@ -490,7 +499,8 @@ def facial_attribute_optimization(
            images_tensor.detach(),\
            gt_images_tensor.detach(),\
            gammas, \
-           image_gen
+           image_gen, \
+           alpha_tensor
 
 def pivot_finetuning(
                      path_images: str,
@@ -574,11 +584,17 @@ def validate_video_gen(
                         video_length: int,
                         face_folder_path: str
                       ):
+
+    if video_length == -1:
+        files = list(filter(lambda x: x.endswith('pt'), os.listdir(latent_folder)))
+        assert len(files), "latent_folder has no latent file."
+        video_length = len(files)
+
     ss_decoder.load_state_dict(torch.load(state_dict_path))
     with imageio.get_writer(save_video_path, fps = 25) as writer:
         for index in tqdm(range(video_length)):
             style_space_latent = torch.load(os.path.join(latent_folder, f"{index+1}.pt"))
-            image = np.uint8(from_tensor(ss_decoder(style_space_latent) * 0.5 + 0.5) * 255.0)
+            image = np.uint8(np.clip(from_tensor(ss_decoder(style_space_latent) * 0.5 + 0.5), 0.0, 1.0) * 255.0)
             image_gt = cv2.imread(os.path.join(face_folder_path, f'{index}.png'))[...,::-1]
             image_gt = cv2.resize(image_gt, (1024,1024))
             image_concat = np.concatenate((image, image_gt), axis = 0)
@@ -615,19 +631,21 @@ def expressive_encoding_pipeline(
             logger.info("re-used last processed data.")
         face_folder_path = os.path.join(face_folder_path, "smooth")
 
+
     assert len(os.listdir(face_folder_path)) > 1, "face files not exists."
 
     stage_one_path = os.path.join(save_path, "e4e")  
     stage_two_path = os.path.join(save_path, "pose")  
     stage_three_path = os.path.join(save_path, "facial")  
     stage_four_path = os.path.join(save_path, "pti")  
-
+    expressive_param_path = os.path.join(save_path, "expressive")
     cache_path = os.path.join(save_path, "cache.pt")
 
     os.makedirs(stage_one_path, exist_ok = True)
     os.makedirs(stage_two_path, exist_ok = True)
     os.makedirs(stage_three_path, exist_ok = True)
     os.makedirs(stage_four_path, exist_ok = True)
+    os.makedirs(expressive_param_path, exist_ok = True)
 
     writer = None
     if DEBUG:
@@ -638,12 +656,18 @@ def expressive_encoding_pipeline(
     detector = get_detector()
 
     # stage 1.
+
+    files_path = {
+                    "driving_face_path": face_folder_path
+                 }
+
+
     if os.path.exists(cache_path):
         gen_file_list, selected_id_image, selected_id_latent, selected_id = torch.load(cache_path)
     else:
-        gen_file_list, selected_id_image, selected_id_latent, selected_id = select_id_latent(face_folder_path,
+        gen_file_list, selected_id_image, selected_id_latent, selected_id = select_id_latent(files_path,
                                                                                              G,
-                                                                                             stage_one_path
+                                                                                             stage_one_path,
                                                                                             )
         torch.save(
                     [
@@ -652,7 +676,7 @@ def expressive_encoding_pipeline(
                         selected_id_latent,
                         selected_id
                     ],
-                    cache_path
+                     cache_path
                   )
     face_info_from_id = get_face_info(
                                         np.uint8(selected_id_image),
@@ -751,7 +775,7 @@ def expressive_encoding_pipeline(
         logger.info("get face info.")
 
         #stage 2.
-        w_with_pose, image_posed = pose_optimization(
+        w_with_pose, image_posed, pose_param = pose_optimization(
                            selected_id_latent.detach(),
                            np.uint8(selected_id_image),
                            gen_image,
@@ -764,11 +788,11 @@ def expressive_encoding_pipeline(
         torch.save(w_with_pose, os.path.join(stage_two_path, f"{ii+1}.pt"))       
         if DEBUG:
             image_posed = cv2.cvtColor(image_posed, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(os.path.join(stage_two_path, f"{ii+1}_pose.png"), image_posed * 255.0)
+            cv2.imwrite(os.path.join(stage_two_path, f"{ii+1}_pose.jpg"), image_posed * 255.0)
         logger.info("pose optimized..")
 
         # stage 3.
-        style_space_latent, images_tensor_last, gt_images_tensor_last, gammas, image_gen = \
+        style_space_latent, images_tensor_last, gt_images_tensor_last, gammas, image_gen, facial_param = \
                 facial_attribute_optimization(w_with_pose, \
                                               gen_image,\
                                               face_info_from_gen,\
@@ -781,13 +805,16 @@ def expressive_encoding_pipeline(
         
         torch.save([x.detach() for x in style_space_latent], os.path.join(stage_three_path, f"{ii+1}.pt"))       
         torch.save([images_tensor_last, gt_images_tensor_last], os.path.join(stage_three_path, "last_tensor.pt"))
+
+        torch.save([pose_param, facial_param], os.path.join(expressive_param_path, f"attribute_{ii+1}.pt"))
         if DEBUG:
             image_gen = cv2.cvtColor(image_gen, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(os.path.join(stage_three_path, f"{ii+1}_facial.png"), image_gen[...,::-1])
+            cv2.imwrite(os.path.join(stage_three_path, f"{ii+1}_facial.jpg"), image_gen)
         logger.info("facial optimized..")
 
     # stage 4.
     snapshots = os.path.join(stage_four_path, "snapshots")
+    os.makedirs(snapshots, exist_ok = True)
     snapshot_files = os.listdir(snapshots)
 
     if os.path.exists(snapshots) and len(snapshot_files):

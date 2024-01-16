@@ -24,6 +24,8 @@ src/
 tensorboard/
 models/
 video/
+tests/puppet
+
 
 # temp file.
 results

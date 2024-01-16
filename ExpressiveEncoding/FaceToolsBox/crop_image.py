@@ -34,6 +34,114 @@ right_eye = [382,381,380,477,374,373,390,249,263,466,388,387,386,475,385,384,398
 right_eye2 = [463,341,256,252,253,254,339,255,359,467,260,259,257,258,286,414,]
 right_eye3 = [464,453,452,451,450,449,448,261,446,342,445,444,443,442,441,413]
 
+def crop_one_image(
+                    image: np.ndarray
+                  ):
+    use_first_eye_to_mouth = True
+    e_to_mouth = None
+    left_eye_dis = None
+    right_eye_dis = None
+    h,w = image.shape[:2]
+    with mp_face_mesh.FaceMesh(static_image_mode=True,max_num_faces=1,refine_landmarks=True,min_detection_confidence=0.5) as face_mesh:
+        results = face_mesh.process(image)
+        if not results.multi_face_landmarks:
+            raise RuntimeError("no face detected.")
+        
+        for face_landmarks in results.multi_face_landmarks:
+            points_np = np.zeros((len(face_landmarks.landmark), 3), np.float32)
+            for idx, point in enumerate(face_landmarks.landmark):
+                points_np[idx, 0] = point.x * w
+                points_np[idx, 1] = point.y * h
+                points_np[idx, 2] = point.z
+        lm_eye_left = []
+        for key_p_idx in left_eye3:
+            lm_eye_left.append(points_np[key_p_idx,:2])
+        for key_p_idx in left_eye2:
+            lm_eye_left.append(points_np[key_p_idx,:2])
+        for key_p_idx in left_eye:
+            lm_eye_left.append(points_np[key_p_idx, :2])
+        lm_eye_right = []
+        for key_p_idx in right_eye3:
+            lm_eye_right.append(points_np[key_p_idx,:2])
+        for key_p_idx in right_eye2:
+            lm_eye_right.append(points_np[key_p_idx,:2])
+        for key_p_idx in right_eye:
+            lm_eye_right.append(points_np[key_p_idx,:2])
+        lm_mouth_outer = []
+        for key_p_idx in th_list:
+            lm_mouth_outer.append(points_np[key_p_idx,:2])
+        for key_p_idx in th_list2:
+            lm_mouth_outer.append(points_np[key_p_idx,:2])
+        #
+        # Calculate auxiliary vectors.
+        eye_left = np.mean(lm_eye_left, axis=0)
+        eye_right = np.mean(lm_eye_right, axis=0)
+        if left_eye_dis is None:
+            left_eye_dis = points_np[22, 1] + points_np[23, 1] + points_np[24, 1]
+            left_eye_dis = left_eye_dis / 3
+            left_eye_dis = left_eye_dis - eye_left[1]
+        else:
+            left_eye_dis_now = points_np[22, 1] + points_np[23, 1] + points_np[24, 1]
+            left_eye_dis_now = left_eye_dis_now / 3
+            left_eye_dis_now = left_eye_dis_now - eye_left[1]
+            if abs(left_eye_dis_now-left_eye_dis) > 1.5:
+                eye_left[1] = eye_left[1] - (left_eye_dis -left_eye_dis_now)
+
+        if right_eye_dis is None:
+            right_eye_dis = points_np[252, 1] + points_np[253, 1] + points_np[254, 1]
+            right_eye_dis = right_eye_dis / 3
+            right_eye_dis = right_eye_dis - eye_right[1]
+        else:
+            right_eye_dis_now = points_np[252, 1] + points_np[253, 1] + points_np[254, 1]
+            right_eye_dis_now = right_eye_dis_now / 3
+            right_eye_dis_now = right_eye_dis_now - eye_right[1]
+            if abs(right_eye_dis_now - right_eye_dis) > 1.5:
+                eye_right[1] = eye_right[1] - (right_eye_dis -right_eye_dis_now)
+
+        eye_avg = (eye_left + eye_right) * 0.5
+        eye_to_eye = eye_right - eye_left
+        # eye_to_eye = eye_to_eye * 1.1
+        mouth_avg = np.mean(lm_mouth_outer, axis=0)
+        if use_first_eye_to_mouth:
+            if e_to_mouth is None:
+                eye_to_mouth = mouth_avg - eye_avg
+                e_to_mouth = eye_to_mouth
+            else:
+                eye_to_mouth = e_to_mouth
+        rotate_level = True
+        # Choose oriented crop rectangle.
+        if rotate_level:
+            x = eye_to_eye - np.flipud(eye_to_mouth) * [-1, 1]
+            x /= np.hypot(*x)
+            x *= max(np.hypot(*eye_to_eye) * 2.0, np.hypot(*eye_to_mouth) * 1.8)
+            y = np.flipud(x) * [-1, 1]
+            c0 = eye_avg + eye_to_mouth * 0.1
+        else:
+            x = np.array([1, 0], dtype=np.float64)
+            x *= max(np.hypot(*eye_to_eye) * 2.0, np.hypot(*eye_to_mouth) * 1.8)
+            y = np.flipud(x) * [-1, 1]
+            c0 = eye_avg + eye_to_mouth * 0.1
+        quad = np.stack([c0 - x - y, c0 - x + y, c0 + x + y, c0 + x - y])
+        qsize = np.hypot(*x) * 2
+
+        # # Shrink.
+        output_size = 512
+
+        #shrink = int(np.floor(qsize / output_size * 0.5))
+        #if shrink > 1:
+        #    rsize = (int(np.rint(float(img.size[0]) / shrink)), int(np.rint(float(img.size[1]) / shrink)))
+        #    img = img.resize(rsize, PIL.Image.ANTIALIAS)
+        #    quad /= shrink
+        #    qsize /= shrink
+        
+    
+        transform_size = 512
+        src_points = np.float32(
+                [[0, 0], [0, transform_size -  1], [transform_size -  1, transform_size -  1], [transform_size -  1, 0]])
+    
+        m = cv2.getPerspectiveTransform((quad.astype(np.float32)+0.5), src_points)
+        return cv2.warpPerspective(image, m, (512, 512), flags=cv2.INTER_CUBIC)
+
 def crop(in_dir: str, 
          out_dir: str, 
          use_first_eye_to_mouth: bool = True,
@@ -75,6 +183,7 @@ def crop(in_dir: str,
             results = face_mesh.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             if not results.multi_face_landmarks:
                 break
+            
             for face_landmarks in results.multi_face_landmarks:
                 points_np = np.zeros((len(face_landmarks.landmark), 3), np.float32)
                 for idx, point in enumerate(face_landmarks.landmark):
@@ -82,7 +191,6 @@ def crop(in_dir: str,
                     points_np[idx, 1] = point.y * h
                     points_np[idx, 2] = point.z
                 lm_list.append(points_np[None, ...])
-
             lm_eye_left = []
             for key_p_idx in left_eye3:
                 lm_eye_left.append(points_np[key_p_idx,:2])
@@ -158,35 +266,19 @@ def crop(in_dir: str,
 
             quad = np.stack([c0 - x - y, c0 - x + y, c0 + x + y, c0 + x - y])
             qsize = np.hypot(*x) * 2
-
-            random_shift = 0.
-            retry_crops = False
-            # # Keep drawing new random crop offsets until we find one that is contained in the image
-            # # and does not require padding
-            if random_shift != 0:
-                for _ in range(1000):
-                    # Offset the crop rectange center by a random shift proportional to image dimension
-                    # and the requested standard deviation
-                    c = (c0 + np.hypot(*x) * 2 * random_shift * np.random.normal(0, 1, c0.shape))
-                    quad = np.stack([c - x - y, c - x + y, c + x + y, c + x - y])
-                    crop = (int(np.floor(min(quad[:, 0]))), int(np.floor(min(quad[:, 1]))), int(np.ceil(max(quad[:, 0]))),
-                            int(np.ceil(max(quad[:, 1]))))
-                    if not retry_crops or not (crop[0] < 0 or crop[1] < 0 or crop[2] >= img.width or crop[3] >= img.height):
-                        # We're happy with this crop (either it fits within the image, or retries are disabled)
-                        break
-                else:
-                    # rejected N times, give up and move to next image
-                    # (does not happen in practice with the FFHQ data)
-                    logger.info('rejected image')
+            print(quad, qsize)
 
             # # Shrink.
             output_size = 512
-            shrink = int(np.floor(qsize / output_size * 0.5))
-            if shrink > 1:
-                rsize = (int(np.rint(float(img.size[0]) / shrink)), int(np.rint(float(img.size[1]) / shrink)))
-                img = img.resize(rsize, PIL.Image.ANTIALIAS)
-                quad /= shrink
-                qsize /= shrink
+
+            #shrink = int(np.floor(qsize / output_size * 0.5))
+            #if shrink > 1:
+            #    rsize = (int(np.rint(float(img.size[0]) / shrink)), int(np.rint(float(img.size[1]) / shrink)))
+            #    img = img.resize(rsize, PIL.Image.ANTIALIAS)
+            #    quad /= shrink
+            #    qsize /= shrink
+            
+            #print(quad, qsize)
             # # Crop.
             border = max(int(np.rint(qsize * 0.1)), 3)
             crop = (int(np.floor(min(quad[:, 0]))), int(np.floor(min(quad[:, 1]))), int(np.ceil(max(quad[:, 0]))),
@@ -197,46 +289,41 @@ def crop(in_dir: str,
                 # img = img.crop(crop)
                 # quad -= crop[0:2]
                 pass
-            enable_padding = False
-            # # Pad.
-            pad = (int(np.floor(min(quad[:, 0]))), int(np.floor(min(quad[:, 1]))), int(np.ceil(max(quad[:, 0]))),
-                   int(np.ceil(max(quad[:, 1]))))
-            pad = (max(-pad[0] + border, 0), max(-pad[1] + border, 0), max(pad[2] - img.size[0] + border, 0),
-                   max(pad[3] - img.size[1] + border, 0))
-            if enable_padding and max(pad) > border - 4:
-                pad = np.maximum(pad, int(np.rint(qsize * 0.3)))
-                img = np.pad(np.float32(img), ((pad[1], pad[3]), (pad[0], pad[2]), (0, 0)), 'reflect')
-                h, w, _ = img.shape
-                y, x, _ = np.ogrid[:h, :w, :1]
-                mask = np.maximum(1.0 - np.minimum(np.float32(x) / pad[0], np.float32(w - 1 - x) / pad[2]),
-                                  1.0 - np.minimum(np.float32(y) / pad[1], np.float32(h - 1 - y) / pad[3]))
-                blur = qsize * 0.02
-                img += (scipy.ndimage.gaussian_filter(img, [blur, blur, 0]) - img) * np.clip(mask * 3.0 + 1.0, 0.0, 1.0)
-                img += (np.median(img, axis=(0, 1)) - img) * np.clip(mask, 0.0, 1.0)
-                img = PIL.Image.fromarray(np.uint8(np.clip(np.rint(img), 0, 255)), 'RGB')
-                quad += pad[:2]
             quads.append(quad)
 
             # # Transform.
     transform_size = 512
-    src_quads = np.array(quads)
-    smoothed_src_quads = gaussian_filter1d(src_quads, sigam, axis=0)
-
+    if len(quads) > 1:
+        src_quads = np.array(quads)
+        smoothed_src_quads = gaussian_filter1d(src_quads, sigam, axis=0)
+    else:
+        smoothed_src_quads = quads
+    
     src_points = np.float32(
             [[0, 0], [0, transform_size -  1], [transform_size -  1, transform_size -  1], [transform_size -  1, 0]])
     # dst_quad = np.float32(np.array(src_quads) + 0.5)
     logger.info("getting smoothed M and faces ...")
     M_smooth = []
     
-    pbar_smooth = tqdm(range(len(smoothed_src_quads))) 
-    filenames.set_image_index(0)
-    for i, img in enumerate(pbar_files):
-        out_file = osp.join(out_faces, f'{i}.png')
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        m = cv2.getPerspectiveTransform((smoothed_src_quads[i].astype(np.float32)+0.5), src_points)
-        face = cv2.warpPerspective(img, m, (512, 512), flags=cv2.INTER_CUBIC)
-        cv2.imwrite(out_file, face)
-        M_smooth.append(m.reshape(1, 3, 3))
+    #pbar_smooth = tqdm(range(len(smoothed_src_quads))) 
+    if in_dir.endswith(".mp4"):
+        filenames.set_image_index(0)
+        for i, img in enumerate(pbar_files):
+            out_file = osp.join(out_faces, f'{i}.png')
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            m = cv2.getPerspectiveTransform((smoothed_src_quads[i].astype(np.float32)+0.5), src_points)
+            face = cv2.warpPerspective(img, m, (512, 512), flags=cv2.INTER_CUBIC)
+            cv2.imwrite(out_file, face)
+            M_smooth.append(m.reshape(1, 3, 3))
+    else:
+        for i in range(len(smoothed_src_quads)):
+            src_file = osp.join(in_dir, filenames[i])
+            out_file = osp.join(out_faces, filenames[i])
+            img = cv2.imread(src_file)
+            m = cv2.getPerspectiveTransform((smoothed_src_quads[i].astype(np.float32)+0.5), src_points)
+            face = cv2.warpPerspective(img, m, (512, 512), flags=cv2.INTER_CUBIC)
+            cv2.imwrite(out_file, face)
+            M_smooth.append(m.reshape(1, 3, 3))
     M_smooth = np.concatenate(M_smooth, axis=0)
     np.save(dst_npy, M_smooth)
 
