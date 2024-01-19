@@ -9,7 +9,7 @@ mkdir -p results
 function main
 {
     DEBUG=True \
-    CUDA_VISIBLE_DEVICES=3 python -m ExpressiveEncoding \
+    CUDA_VISIBLE_DEVICES=4 python -m ExpressiveEncoding \
                            --config_path ./scripts/${exp_name} \
                            --save_path ./results/${exp_name}
 }

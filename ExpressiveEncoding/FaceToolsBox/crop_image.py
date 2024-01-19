@@ -127,13 +127,12 @@ def crop_one_image(
         # # Shrink.
         output_size = 512
 
-        #shrink = int(np.floor(qsize / output_size * 0.5))
-        #if shrink > 1:
-        #    rsize = (int(np.rint(float(img.size[0]) / shrink)), int(np.rint(float(img.size[1]) / shrink)))
-        #    img = img.resize(rsize, PIL.Image.ANTIALIAS)
-        #    quad /= shrink
-        #    qsize /= shrink
-        
+        shrink = int(np.floor(qsize / output_size * 0.5))
+        if shrink > 1:
+            quad /= shrink
+            qsize /= shrink
+            rsize = (int(np.rint(float(image.shape[1]) / shrink)), int(np.rint(float(image.shape[0]) / shrink)))
+            image = cv2.resize(image, rsize)
     
         transform_size = 512
         src_points = np.float32(
@@ -142,45 +141,40 @@ def crop_one_image(
         m = cv2.getPerspectiveTransform((quad.astype(np.float32)+0.5), src_points)
         return cv2.warpPerspective(image, m, (512, 512), flags=cv2.INTER_CUBIC)
 
-def crop(in_dir: str, 
+def crop(
+         video_file: str, 
          out_dir: str, 
          use_first_eye_to_mouth: bool = True,
-         sigam: int = 2):
+         sigam: int = 2
+        ):
 
+    assert os.path.exists(video_file), f"{video_file} not exist."
     os.makedirs(out_dir, exist_ok = True)
     dst_npy = f'{out_dir}/smooth_M.npy'
     out_faces = f'{out_dir}/smooth'
-    Path(out_faces).mkdir(parents=True,exist_ok=True)
-    if in_dir.endswith(".mp4"):
-        filenames = imageio.get_reader(in_dir)
-    else:
-        filenames = os.listdir(in_dir)
-        filenames.sort(key=lambda x : int(os.path.basename(x).split('.')[0]))
-    img_idx = -1
+    os.makedirs(out_faces, exist_ok = True)
     lm_list = []
     e_to_mouth = None
     left_eye_dis = None
     right_eye_dis = None
     quads = []
-    pbar_files = tqdm(filenames)
 
-    for i, p in enumerate(pbar_files):
-        img_idx += 1
-        #if img_idx >=100:
-        #    break
-        if isinstance(p, str):
-            src_file = osp.join(in_dir, p)
-            image = cv2.imread(src_file)
-            out_file = osp.join(out_faces, p)
-        else:
-            image = p
-            out_file = osp.join(out_faces, f"{img_idx}.png")
-        if Path(out_file).exists():
-            logger.info('pass')
-            continue
+    video_reader = imageio.get_reader(video_file)
+    video_meta_info = video_reader.get_meta_data()
+    video_length = round(float(video_meta_info['fps']) * float(video_meta_info['duration']))
+    pbar_files = tqdm(range(video_length))
+
+    resize_or_not = False
+    target_size = None
+
+    for i in pbar_files:
+        try:
+            image = video_reader.get_next_data()
+        except StopIteration as s:
+            break
         h,w = image.shape[:2]
         with mp_face_mesh.FaceMesh(static_image_mode=True,max_num_faces=1,refine_landmarks=True,min_detection_confidence=0.5) as face_mesh:
-            results = face_mesh.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            results = face_mesh.process(image)
             if not results.multi_face_landmarks:
                 break
             
@@ -259,36 +253,20 @@ def crop(in_dir: str,
                 x *= max(np.hypot(*eye_to_eye) * 2.0, np.hypot(*eye_to_mouth) * 1.8)
                 y = np.flipud(x) * [-1, 1]
                 c0 = eye_avg + eye_to_mouth * 0.1
-            if isinstance(p, str):
-                img = PIL.Image.open(src_file)
-            else:
-                img = PIL.Image.fromarray(image)
+
 
             quad = np.stack([c0 - x - y, c0 - x + y, c0 + x + y, c0 + x - y])
             qsize = np.hypot(*x) * 2
-            print(quad, qsize)
 
             # # Shrink.
             output_size = 512
 
-            #shrink = int(np.floor(qsize / output_size * 0.5))
-            #if shrink > 1:
-            #    rsize = (int(np.rint(float(img.size[0]) / shrink)), int(np.rint(float(img.size[1]) / shrink)))
-            #    img = img.resize(rsize, PIL.Image.ANTIALIAS)
-            #    quad /= shrink
-            #    qsize /= shrink
+            shrink = int(np.floor(qsize / output_size * 0.5))
+            if shrink > 1:
+                resize_or_not = True
+                target_size = (int(np.rint(float(image.shape[1]) / shrink)), int(np.rint(float(image.shape[0]) / shrink)))
+                quad /= shrink
             
-            #print(quad, qsize)
-            # # Crop.
-            border = max(int(np.rint(qsize * 0.1)), 3)
-            crop = (int(np.floor(min(quad[:, 0]))), int(np.floor(min(quad[:, 1]))), int(np.ceil(max(quad[:, 0]))),
-                    int(np.ceil(max(quad[:, 1]))))
-            crop = (max(crop[0] - border, 0), max(crop[1] - border, 0), min(crop[2] + border, img.size[0]),
-                    min(crop[3] + border, img.size[1]))
-            if crop[2] - crop[0] < img.size[0] or crop[3] - crop[1] < img.size[1]:
-                # img = img.crop(crop)
-                # quad -= crop[0:2]
-                pass
             quads.append(quad)
 
             # # Transform.
@@ -305,25 +283,21 @@ def crop(in_dir: str,
     logger.info("getting smoothed M and faces ...")
     M_smooth = []
     
-    #pbar_smooth = tqdm(range(len(smoothed_src_quads))) 
-    if in_dir.endswith(".mp4"):
-        filenames.set_image_index(0)
-        for i, img in enumerate(pbar_files):
-            out_file = osp.join(out_faces, f'{i}.png')
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            m = cv2.getPerspectiveTransform((smoothed_src_quads[i].astype(np.float32)+0.5), src_points)
-            face = cv2.warpPerspective(img, m, (512, 512), flags=cv2.INTER_CUBIC)
-            cv2.imwrite(out_file, face)
-            M_smooth.append(m.reshape(1, 3, 3))
-    else:
-        for i in range(len(smoothed_src_quads)):
-            src_file = osp.join(in_dir, filenames[i])
-            out_file = osp.join(out_faces, filenames[i])
-            img = cv2.imread(src_file)
-            m = cv2.getPerspectiveTransform((smoothed_src_quads[i].astype(np.float32)+0.5), src_points)
-            face = cv2.warpPerspective(img, m, (512, 512), flags=cv2.INTER_CUBIC)
-            cv2.imwrite(out_file, face)
-            M_smooth.append(m.reshape(1, 3, 3))
+    pbar_files = tqdm(range(video_length))
+    video_reader.set_image_index(0)
+    for i in pbar_files:
+        try:
+            image = video_reader.get_next_data()
+        except StopIteration as s:
+            break
+        out_file = osp.join(out_faces, f'{i}.png')
+        img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        if resize_or_not:
+            img = cv2.resize(img, target_size, interpolation = cv2.INTER_CUBIC)
+        m = cv2.getPerspectiveTransform((smoothed_src_quads[i].astype(np.float32)+0.5), src_points)
+        face = cv2.warpPerspective(img, m, (512, 512), flags=cv2.INTER_CUBIC)
+        cv2.imwrite(out_file, face)
+        M_smooth.append(m.reshape(1, 3, 3))
     M_smooth = np.concatenate(M_smooth, axis=0)
     np.save(dst_npy, M_smooth)
 

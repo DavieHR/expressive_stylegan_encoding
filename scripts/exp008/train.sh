@@ -8,21 +8,15 @@ mkdir -p results
 
 function main
 {
-
-    files=`ls images/`
+    files=`ls video/`
     for file in ${files[@]};
     do
         basename=`echo $file | awk -F '.' '{print $1}'`
-        if [[ $basename != "pic_01" ]];
-        then
-            break
-        fi
         echo "${basename} is processing."
-        CUDA_VISIBLE_DEVICES=7 python -m ExpressiveEncoding \
-                               --pipeline "puppet" \
+        CUDA_VISIBLE_DEVICES=6 python -m ExpressiveEncoding \
                                --config_path ./scripts/${exp_name} \
-                               --save_path ./results/${exp_name}/${basename} \
-                               --path ./images/${file}
+                               --save_path ./results/${exp_name} \
+                               --path ./video/${file}
     done
 }
 

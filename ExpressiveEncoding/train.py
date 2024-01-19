@@ -156,15 +156,15 @@ def select_id_latent(
 
 # Stage II: pose optimized 
 def pose_optimization(
-                        latent_id: torch.Tensor,
-                        id_image: np.ndarray,
-                        ground_truth: np.ndarray,
-                        res_gt: edict,
-                        res_id: edict,
-                        G: Callable,
-                        pose_edit: Callable,
-                        loss_register: Callable,
-                        **kwargs
+                      latent_id: torch.Tensor,
+                      id_image: np.ndarray,
+                      ground_truth: np.ndarray,
+                      res_gt: edict,
+                      res_id: edict,
+                      G: Callable,
+                      pose_edit: Callable,
+                      loss_register: Callable,
+                      **kwargs
                      ):
     
     if VERBOSE:
@@ -574,6 +574,9 @@ def pivot_finetuning(
         if epoch % save_interval == 0:
             torch.save(ss_decoder.state_dict(), os.path.join(path_snapshots, f"{epoch}.pth"))
             lastest_model_path = os.path.join(path_snapshots, f"{epoch}.pth")
+
+    torch.save(ss_decoder.state_dict(), os.path.join(path_snapshots, f"{epoch}.pth"))
+    lastest_model_path = os.path.join(path_snapshots, f"{epoch}.pth")
     return lastest_model_path
 
 def validate_video_gen(
@@ -602,7 +605,8 @@ def validate_video_gen(
 
 def expressive_encoding_pipeline(
                                  config_path: str,
-                                 save_path: str
+                                 save_path: str,
+                                 path: str = None
                                 ):
 
     #TODO: log generator.
@@ -619,7 +623,10 @@ def expressive_encoding_pipeline(
     with open(os.path.join(config_path, "config.yaml")) as f:
         basis_config = edict(yaml.load(f, Loader = yaml.CLoader))
     
-    video_path = basis_config.path
+    if path is None:
+        video_path = basis_config.path
+    else:
+        video_path = path
 
     if os.path.isdir(video_path):
         face_folder_path = video_path
@@ -748,6 +755,7 @@ def expressive_encoding_pipeline(
     start_idx = len(optimized_latents)
     if start_idx > 0:
         last_tensor_path = os.path.join(stage_three_path, "last_tensor.pt")
+        #last_tensor_path = os.path.join(stage_three_path, "8.pt")
         if not os.path.exists(last_tensor_path):
             logger.warn("last tensor not exits, this may harm video stable....")
         else:

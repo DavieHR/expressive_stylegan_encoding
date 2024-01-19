@@ -8,10 +8,18 @@ mkdir -p results
 
 function main
 {
-    CUDA_VISIBLE_DEVICES=6 python -m ExpressiveEncoding \
-                           --pipeline "puppet" \
-                           --config_path ./scripts/${exp_name} \
-                           --save_path ./results/${exp_name}
+
+    files=`ls images/`
+    for file in ${files[@]};
+    do
+        basename=`echo $file | awk -F '.' '{print $1}'`
+        echo "${basename} is processing."
+        CUDA_VISIBLE_DEVICES=7 python -m ExpressiveEncoding \
+                               --pipeline "puppet" \
+                               --config_path ./scripts/${exp_name} \
+                               --save_path ./results/${exp_name}/${basename} \
+                               --path ./images/${file}
+    done
 }
 
 if [ ! -d "log/${exp_name}" ]; then

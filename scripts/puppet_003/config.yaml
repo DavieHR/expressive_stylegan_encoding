@@ -1,7 +1,7 @@
 image_path: "puppet/woman/0.jpg"
-latent_path: "./results/exp007/expressive"
-cache_path: "./results/exp007/cache.pt"
-video_image_path: "./results/exp007/data/smooth"
+latent_path: "./results/exp006/expressive"
+cache_path: "./results/exp006/cache.pt"
+video_image_path: "./results/exp006/data/smooth"
 pti:
 
     losses:
