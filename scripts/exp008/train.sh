@@ -13,9 +13,9 @@ function main
     do
         basename=`echo $file | awk -F '.' '{print $1}'`
         echo "${basename} is processing."
-        CUDA_VISIBLE_DEVICES=6 python -m ExpressiveEncoding \
+        CUDA_VISIBLE_DEVICES=7 python -m ExpressiveEncoding \
                                --config_path ./scripts/${exp_name} \
-                               --save_path ./results/${exp_name} \
+                               --save_path ./results/${exp_name}/${basename} \
                                --path ./video/${file}
     done
 }

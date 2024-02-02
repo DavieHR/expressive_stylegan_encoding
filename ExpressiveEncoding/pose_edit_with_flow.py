@@ -52,8 +52,8 @@ class PoseEdit:
                  yaw and pitch index is 11, 12.
            
         """
-        self.zflow[0, 11, 0, 0] = yaw
-        self.zflow[0, 12, 0, 0] = pitch
+        self.zflow[:, 11, 0, 0] = yaw
+        self.zflow[:, 12, 0, 0] = pitch
 
     def __call__(
                 self, 
@@ -62,5 +62,9 @@ class PoseEdit:
                 pitch,
                 is_w_space = False
                 ):
+        n = latent.shape[0]
+        if self.zflow.shape[0] != n:
+            self.reset()
+            self.zflow = self.zflow.repeat(n,1,1,1)
         self._update_zflow(yaw, pitch)
         return self.cnf(latent, self.zflow, self._zero_padding.to('cuda'), is_w_space)[0]
