@@ -1,9 +1,11 @@
 [submodule "ExpressiveEncoding/StyleFlow"]
 	path = ExpressiveEncoding/StyleFlow
-	url = https://github.com/RameenAbdal/StyleFlow.git
+    url = https://github.com/RameenAbdal/StyleFlow.git
+    ignore=dirty
 [submodule "ExpressiveEncoding/stylegan3"]
 	path = ExpressiveEncoding/stylegan3
 	url = https://github.com/NVlabs/stylegan3
+    ignore=dirty
 [submodule "ExpressiveEncoding/encoder4editing"]
 	path = ExpressiveEncoding/encoder4editing
 	url = https://github.com/omertov/encoder4editing
