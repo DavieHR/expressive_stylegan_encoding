@@ -4,3 +4,9 @@
 [submodule "ExpressiveEncoding/stylegan3"]
 	path = ExpressiveEncoding/stylegan3
 	url = https://github.com/NVlabs/stylegan3
+[submodule "ExpressiveEncoding/encoder4editing"]
+	path = ExpressiveEncoding/encoder4editing
+	url = https://github.com/omertov/encoder4editing
+[submodule "ExpressiveEncoding/loss/FaceParsing"]
+	path = ExpressiveEncoding/loss/FaceParsing
+	url = https://github.com/zllrunning/face-parsing.PyTorch
