@@ -1,8 +1,9 @@
+"""unit test for decoder module."""
 import os
 import sys
-sys.path.insert(0, os.getcwd())
 import torch
 import pytest
+sys.path.insert(0, os.getcwd())
 
 from ExpressiveEncoding.decoder import StyleSpaceDecoder, load_model
 
@@ -12,12 +13,15 @@ optimized_latent_path = "codes/optimized_latent/facial_edit_black_every_id.pt"
 
 @pytest.mark.load
 def test_load_model():
-    G = load_model(stylegan_path)
+    """test load_model
+    """
+    _ = load_model(stylegan_path)
 
 @pytest.mark.decoder
 def test_decoder():
+    """ test for StyleSpaceDecoder Class
+    """
     import cv2
-    import pdb
     ss_decoder = StyleSpaceDecoder(stylegan_path)
     latent_codes = torch.load(latent_code_path)
     ss = ss_decoder.get_style_space(latent_codes[0:1])
@@ -27,9 +31,10 @@ def test_decoder():
 
 @pytest.mark.ss
 def test_from_ss_decoder():
+    """ test for StyleSpaceDecoder pipeline.
+    """
     import imageio
     import numpy as np
-    import pdb
     video_path = "ss_video.mp4"
     video_writer = imageio.get_writer(video_path, fps = 25)
     ss_decoder = StyleSpaceDecoder(stylegan_path)

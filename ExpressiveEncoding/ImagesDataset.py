@@ -1,3 +1,5 @@
+"""the dataset module
+"""
 import os
 import torch
 
@@ -8,12 +10,14 @@ from .utils import make_dataset
 DEBUG = os.environ.get("DEBUG", 0)
 
 class ImagesDataset(Dataset):
-
-    def __init__(self, 
-                 source_root, 
+    """ImagesDataset for pivot tuning.
+    """
+    def __init__(self,
+                 source_root,
                  latent_root,
                  source_transform=None):
-        self.source_paths = sorted(make_dataset(source_root), key = lambda x: int(os.path.basename(x[1]).split('.')[0]))
+        self.source_paths = sorted(make_dataset(source_root), \
+                            key = lambda x: int(os.path.basename(x[1]).split('.')[0]))
         self.latent_root = latent_root
         self.source_transform = source_transform
 
@@ -23,7 +27,7 @@ class ImagesDataset(Dataset):
         return len(self.source_paths)
 
     def __getitem__(self, index):
-        fname, from_path = self.source_paths[index]
+        _, from_path = self.source_paths[index]
         from_im = Image.open(from_path).convert('RGB')
         if self.source_transform:
             from_im = self.source_transform(from_im)

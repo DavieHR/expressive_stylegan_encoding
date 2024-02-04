@@ -1,28 +1,27 @@
+"""Puppet module
+"""
 import os
 import cv2
 import torch
 import yaml
-import click
-import imageio
+
 import numpy as np
 
-from tqdm import tqdm
 from easydict import EasyDict as edict
-from typing import Callable, List
-from functools import reduce
-from DeepLog import logger, Timer
-from DeepLog.logger import logging
+from DeepLog import logger
 
 from .encoder import Encoder4EditingWrapper
 from .decoder import StyleSpaceDecoder
-from .FaceToolsBox.crop_image import crop, crop_one_image
+from .FaceToolsBox.crop_image import crop_one_image
 
 from .train import pivot_finetuning, stylegan_path, e4e_path, \
-                   to_tensor, from_tensor, validate_video_gen,\
+                   to_tensor, validate_video_gen,\
                    alphas, PoseEdit, get_detector, \
                    get_face_info, DEBUG
 
 def attribute_mixing(dlatents, driving_dlatents):
+    """attribute mixing function
+    """
     dlatents_tmp = [dlatent.clone() for dlatent in dlatents]
     driving_dlatents_tmp = [driving_dlatent.clone() for driving_dlatent in driving_dlatents]
     count = 0
@@ -34,6 +33,8 @@ def attribute_mixing(dlatents, driving_dlatents):
     return dlatents_tmp
 
 def update_alpha(dlatents, alpha_tensor):
+    """update alpha
+    """
     #dlatents_tmp = [dlatent.clone() for dlatent in dlatents]
     count = 0
     # first 5 elements.
@@ -45,13 +46,13 @@ def update_alpha(dlatents, alpha_tensor):
 
 def puppet(
             config_path: str,
-            save_path: str, 
+            save_path: str,
             path: str = None
           ):
-
-    import shutil
+    """puppet main function.
+    """
     config_path = os.path.join(config_path, "config.yaml")
-    with open(config_path) as f:
+    with open(config_path, encoding = 'utf-8') as f:
         config = edict(yaml.load(f, Loader = yaml.CLoader))
     if path is None:
         puppet_image_path = config.image_path
@@ -70,7 +71,7 @@ def puppet(
         writer = SummaryWriter(tensorboard_path)
 
     cache_path = config.cache_path
-    gen_file_list, selected_id_image, selected_id_latent, selected_id = torch.load(cache_path)
+    _, selected_id_image, selected_id_latent, selected_id = torch.load(cache_path)
 
     ss_decoder = StyleSpaceDecoder(stylegan_path = stylegan_path)
     e4e = Encoder4EditingWrapper(e4e_path)
@@ -99,13 +100,13 @@ def puppet(
     driving_style_latent = ss_decoder.get_style_space(selected_id_latent)
 
     # get attribute list.
-    attr_files = sorted(os.listdir(driving_latents_folder), key = lambda x: int(x.split('.')[0].split('_')[-1]))
+    attr_files = sorted(os.listdir(driving_latents_folder),\
+                        key = lambda x: int(x.split('.')[0].split('_')[-1]))
 
     assert len(attr_files), "attribute file not exits."
 
     with torch.no_grad():
         zflow = pose_edit(w_plus_latent, yaw, pitch)
-    
     latent_path = os.path.join(save_path, "latent")
     os.makedirs(latent_path, exist_ok = True)
 
@@ -120,7 +121,6 @@ def puppet(
         style_space_latent = attribute_mixing(style_space_latent, driving_style_latent)
         style_space_with_attr = update_alpha(style_space_latent, attr_latents[1])
         torch.save(style_space_with_attr, os.path.join(latent_path, f'{index + 1}.pt'))
-        
     latent_to_train_path = os.path.join(save_path, "latent_to_training")
     os.makedirs(latent_to_train_path, exist_ok = True)
 
@@ -164,10 +164,10 @@ def puppet_video(
             save_path: str, 
             path: str = None
           ):
-
-    import shutil
+    """video2video puppet.
+    """
     config_path = os.path.join(config_path, "config.yaml")
-    with open(config_path) as f:
+    with open(config_path, encoding = 'utf-8') as f:
         config = edict(yaml.load(f, Loader = yaml.CLoader))
 
     puppet_path = path
@@ -186,35 +186,30 @@ def puppet_video(
     driving_latents_folder = config.latent_path
     face_folder_path = config.video_image_path
 
-    writer = None
-    if DEBUG:
-        from torch.utils.tensorboard import SummaryWriter
-        tensorboard_path = os.path.join(save_path, "tensorboard")
-        writer = SummaryWriter(tensorboard_path)
 
     cache_path = config.cache_path
-    gen_file_list, selected_id_image, selected_id_latent, selected_id = torch.load(cache_path)
+    _, _, selected_id_latent, selected_id = torch.load(cache_path)
 
     ss_decoder = StyleSpaceDecoder(stylegan_path = stylegan_path)
-    e4e = Encoder4EditingWrapper(e4e_path)
     pose_edit = PoseEdit()
 
 
     detector = get_detector()
-    face_info_from_puppet = get_face_info(cv2.cvtColor(np.uint8(image_puppet), cv2.COLOR_BGR2RGB), detector)
+    face_info_from_puppet = get_face_info(cv2.cvtColor(np.uint8(\
+                            image_puppet), cv2.COLOR_BGR2RGB), detector)
     pitch = face_info_from_puppet.pitch
     yaw = face_info_from_puppet.yaw
 
     driving_style_latent = ss_decoder.get_style_space(selected_id_latent)
 
     # get attribute list.
-    attr_files = sorted(os.listdir(driving_latents_folder), key = lambda x: int(x.split('.')[0].split('_')[-1]))
+    attr_files = sorted(os.listdir(driving_latents_folder), \
+                        key = lambda x: int(x.split('.')[0].split('_')[-1]))
 
     assert len(attr_files), "attribute file not exits."
 
     with torch.no_grad():
         zflow = pose_edit(w_plus_latent, yaw, pitch)
-    
     latent_path = os.path.join(save_path, "latent")
     os.makedirs(latent_path, exist_ok = True)
 
@@ -228,8 +223,7 @@ def puppet_video(
         style_space_latent = ss_decoder.get_style_space(w_plus_with_pose)
         style_space_latent = attribute_mixing(style_space_latent, driving_style_latent)
         style_space_with_attr = update_alpha(style_space_latent, attr_latents[1])
-        torch.save(style_space_with_attr, os.path.join(latent_path, f'{index + 1}.pt'))
-        
+        torch.save(style_space_with_attr, os.path.join(latent_path, f'{index + 1}.pt'))   
 
 
     snapshots_path = os.path.join(puppet_path, "pti", "snapshots")

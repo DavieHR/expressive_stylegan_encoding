@@ -1,34 +1,38 @@
+"""the wrapper for StyleFlow used for
+   pose editting.
+"""
 import os
-import sys
 import torch
 import numpy as np
 from .StyleFlow.module.flow import cnf
 where_am_i = os.path.dirname(os.path.realpath(__file__))
 
 class PoseEdit:
+    """Class PoseEdit using StyleFlow.
+    """
     _zero_padding = torch.zeros(1, 18, 1)
     def __init__(self,
                  model_path = os.path.join(where_am_i, \
                               'third_party/models/modellarge10k.pt')
                 ):
         self.cnf = cnf(512, '512-512-512-512-512', 17, 1)
-        
         self.cnf.load_state_dict(torch.load(model_path))
         self.cnf.eval()
         self.cnf.to("cuda:0")
         for p in self.cnf.parameters():
             p.requires_grad = False
+        self.zflow = None
         self.reset()
 
     def reset(self):
+        """reset zflow to original
+        """
         self.zflow = self._get_attribute_zflow()
-        self.zflow.requires_grad = False   
+        self.zflow.requires_grad = False
 
     def _get_attribute_zflow(self):
-        
-        light_zflow = np.zeros((1,9,1,1), dtype = np.float32) 
+        light_zflow = np.zeros((1,9,1,1), dtype = np.float32)
         attribute_zflow = np.zeros((8,1), dtype = np.float32)
-
         attribute_zflow[0,0] = 0.0
         attribute_zflow[1,0] = 0.0
         attribute_zflow[2,0] = 0.0
@@ -38,8 +42,10 @@ class PoseEdit:
         attribute_zflow[6,0] = 55.0 # set value same as paper
         attribute_zflow[7,0] = 0.0
 
-        zflow_array = np.concatenate([light_zflow, np.expand_dims(attribute_zflow, axis = (0, -1))], axis = 1)
-        return torch.from_numpy(zflow_array).type(torch.FloatTensor).cuda()
+        zflow_array = np.concatenate([light_zflow, \
+                      np.expand_dims(attribute_zflow, axis = (0, -1))], axis = 1)
+        return torch.from_numpy(zflow_array).type(\
+                torch.FloatTensor).cuda()
 
     def _update_zflow(self,
                       yaw,
@@ -56,7 +62,7 @@ class PoseEdit:
         self.zflow[:, 12, 0, 0] = pitch
 
     def __call__(
-                self, 
+                self,
                 latent,
                 yaw,
                 pitch,

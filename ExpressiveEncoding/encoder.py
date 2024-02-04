@@ -1,14 +1,17 @@
+"""The wrapper of encoder4editting.
+"""
 import os
 import sys
+import argparse
+import torch
 where_am_i = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, os.path.join(where_am_i, "encoder4editing"))
 
-import torch
-import argparse
 from models.psp import pSp
-from models.encoders.psp_encoders import Encoder4Editing
 
 def get_e4e_model(checkpoint_path, device='cuda'):
+    """get e4e model function
+    """
     ckpt = torch.load(checkpoint_path, map_location='cpu')
     opts = ckpt['opts']
 
@@ -22,6 +25,8 @@ def get_e4e_model(checkpoint_path, device='cuda'):
     return net, opts
 
 class Encoder4EditingWrapper:
+    """the wrapper of encoder4editing
+    """
     def __init__(
                   self,
                   checkpoint_path

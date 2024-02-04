@@ -1,23 +1,25 @@
+"""Expressive total pipeline module.
+"""
 import os
+from typing import Callable
+from functools import reduce
+
 import cv2
 import torch
 import yaml
-import click
 import imageio
 import numpy as np
 
 from tqdm import tqdm
 from easydict import EasyDict as edict
-from typing import Callable, List
-from functools import reduce
 from DeepLog import logger, Timer
 from DeepLog.logger import logging
 
-from .pose_edit_with_flow import PoseEdit 
+from .pose_edit_with_flow import PoseEdit
 from .decoder import StyleSpaceDecoder, load_model
 from .encoder import Encoder4EditingWrapper
-from .FaceToolsBox.alignment import get_detector, mp, infer, get_euler_angle, get_landmarks_from_mediapipe_results, need_to_warp
-from .FaceToolsBox.test_ldm import need_to_warp
+from .FaceToolsBox.alignment import get_detector, infer, \
+                             get_euler_angle, get_landmarks_from_mediapipe_results, need_to_warp
 from .FaceToolsBox.crop_image import crop
 
 from .loss import LossRegisterBase
@@ -74,9 +76,11 @@ alpha_S_indexes = [
                     [409]
                   ]
 
-alphas = [(x, y) for x, y in zip(alpha_indexes, alpha_S_indexes)]
+alphas = list(zip(alpha_indexes, alpha_S_indexes))
 
 def getBack(var_grad_fn):
+    """get backpropagate gradient.
+    """
     logger.info(var_grad_fn)
     for n in var_grad_fn.next_functions:
         if n[0]:
@@ -92,12 +96,14 @@ def get_face_info(
                   image: np.ndarray,
                   detector: object
                  ):
+    """get face info function.
+    """
     res = infer(detector, image)
     ldm = get_landmarks_from_mediapipe_results(res)
     h,w = image.shape[:2]
     ldm[:,0] *= w # 1024x1024
     ldm[:,1] *= h # 1024x1024
-    angle = get_euler_angle(res)     
+    angle = get_euler_angle(res)   
     pitch, yaw, _ = angle
     is_eye_closed = need_to_warp(res)
 
@@ -109,7 +115,8 @@ def get_face_info(
                 )
 
 def gen_masks(ldm, image):
-
+    """gen masks function
+    """
     masks = {}
     landmarks_dict = {}
 

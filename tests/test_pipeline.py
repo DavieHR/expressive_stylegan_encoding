@@ -1,37 +1,44 @@
+"""this function is used as the unit test for train module."""
+# pylint: disable=no-member
+# pylint: disable=import-error
+# pylint: disable=import-outside-toplevel
+# pylint: disable=too-many-locals
 import os
 import sys
-sys.path.insert(0, os.getcwd())
 import pytest
 import cv2
+sys.path.insert(0, os.getcwd())
 
-from ExpressiveEncoding.train import (get_face_info, 
+from ExpressiveEncoding.train import (get_face_info,
                                       select_id_latent,
                                       pose_optimization,
                                       facial_attribute_optimization,
                                       expressive_encoding_pipeline,
-                                      pivot_finetuning
+                                      pivot_finetuning,
+                                      PoseEdit, get_detector
                                      )
-
 @pytest.mark.face_info
 def test_face_info():
-    from ExpressiveEncoding.train import get_detector
+    """test get_face_info function.
+    """
     detector = get_detector()
     image = cv2.imread("tests/face/164.png")
     assert image is not None, "image not exist."
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # pylint: disable=no-member
     face_info = get_face_info(image, detector)
-
     print(face_info)
 
 @pytest.mark.encoder
 def test_encoder():
-    from ExpressiveEncoding.train import stylegan_path, StyleSpaceDecoder, load_model, torch
-    G = load_model(stylegan_path).synthesis
+    """test encoder function.
+    """
+    from ExpressiveEncoding.train import stylegan_path,  load_model, torch # pylint: disable=import-error
+    generate_style_gan = load_model(stylegan_path).synthesis
     face_folder = './tests/face'
     gen_path = "./tests/e4e"
     os.makedirs(gen_path, exist_ok = True)
-    gen_files, image, latent, selected_id = select_id_latent(face_folder,
-                                                G,
+    _, _, latent, selected_id = select_id_latent(face_folder,
+                                                generate_style_gan,
                                                 gen_path)
 
     torch.save(latent, os.path.join(gen_path, 'id_latent.pt'))
@@ -40,14 +47,16 @@ def test_encoder():
 
 @pytest.mark.pose
 def test_pose():
+    """test pose pipeline
+    """
     from ExpressiveEncoding.train import load_model, torch, get_detector, yaml, edict, stylegan_path
     detector = get_detector()
-    G = load_model(stylegan_path).synthesis
-    for p in G.parameters():
+    generate_style_gan = load_model(stylegan_path).synthesis
+    for p in generate_style_gan.parameters():
         p.requires_grad = False
     pose_edit = PoseEdit()
 
-    face_e4e_path = './tests/e4e/0_gen.png' 
+    face_e4e_path = './tests/e4e/0_gen.png'
     id_latent_path = './tests/e4e/id_latent.pt'
     id_image_path = './tests/e4e/4_gen.png'
     pose_path = "./tests/pose"
@@ -65,7 +74,7 @@ def test_pose():
 
     face_info_from_gen = get_face_info(gen_image, detector)
 
-    with open('./tests/pose.yaml') as f:
+    with open('./tests/pose.yaml', encoding = "utf-8") as f:
         config_pose = edict(yaml.load(f, Loader = yaml.CLoader))
 
     w_with_pose, image_posed = pose_optimization( \
@@ -74,7 +83,7 @@ def test_pose():
                                                    gen_image, \
                                                    face_info_from_gen, \
                                                    face_info_from_id, \
-                                                   G, \
+                                                   generate_style_gan, \
                                                    pose_edit, \
                                                    config_pose \
                                                  )
@@ -84,32 +93,35 @@ def test_pose():
 
 @pytest.mark.facial_attribute
 def test_facial_attribute():
-    
+    """facial attribute optimization pipeline
+    """
     from copy import deepcopy
     from ExpressiveEncoding.train import load_model, torch, get_detector, \
                                          yaml, edict, stylegan_path, \
                                          from_tensor, StyleSpaceDecoder, \
                                          LossRegisterBase
     detector = get_detector()
-    G = load_model(stylegan_path).synthesis
-    ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))
-    face_e4e_path = './tests/e4e/0_gen.png' 
+    generate_style_gan = load_model(stylegan_path).synthesis
+    ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(generate_style_gan))
+    face_e4e_path = './tests/e4e/0_gen.png'
     id_latent_path = './tests/pose/latent.pt'
     pose_path = "./tests/facial_attribute"
     os.makedirs(pose_path, exist_ok = True)
     id_latent = torch.load(id_latent_path)
     gen_image = cv2.imread(face_e4e_path)
     gen_image = cv2.cvtColor(gen_image, cv2.COLOR_BGR2RGB)
-    with open('./tests/facial_attribute.yaml') as f:
+    with open('./tests/facial_attribute.yaml', encoding = 'utf-8') as f:
         config_facial = edict(yaml.load(f, Loader = yaml.CLoader))
     face_info_from_gen = get_face_info(
-                                        gen_image, 
+                                        gen_image,
                                         detector
                                       )
 
     class FacialLossRegister(LossRegisterBase):
-        def forward(self, 
-                    x, 
+        """FacialLossRegister loss child class.
+        """
+        def forward(self,
+                    x,
                     y,
                     mask,
                     weights_all,
@@ -117,9 +129,11 @@ def test_facial_attribute():
                     x_pre = None,
                     y_pre = None
                    ):
+            """forward function
+            """
             l2_loss = self.l2(x, y) * weights_all
             lpips_loss = self.lpips(x,y, is_reduce = False) * weights
-            fp_loss = self.fp(x, y, mask)    
+            fp_loss = self.fp(x, y, mask)
             inter_frame_loss = torch.zeros_like(lpips_loss)
             id_loss = self.id_loss(x, y) * 0.0
             ret = {
@@ -131,7 +145,7 @@ def test_facial_attribute():
             if x_pre is not None and y_pre is not None:
                 inter_frame_loss = self.if_loss(
                                                 x,
-                                                x_pre, 
+                                                x_pre,
                                                 y,
                                                 y_pre,
                                                 self.lpips
@@ -141,22 +155,24 @@ def test_facial_attribute():
             return ret
 
     loss_register = FacialLossRegister(config_facial)
-    dlatents_all, images_tensor, gt_images_tensor, gammas, image_gen = facial_attribute_optimization( \
-                                                                                                     id_latent, \
-                                                                                                     gen_image, \
-                                                                                                     face_info_from_gen, \
-                                                                                                     loss_register, \
-                                                                                                     ss_decoder \
-                                                                                                    ) 
+    _, _, _, _, image_gen = facial_attribute_optimization( \
+                                                           id_latent, \
+                                                           gen_image, \
+                                                           face_info_from_gen, \
+                                                           loss_register, \
+                                                           ss_decoder \
+                                                          )
     cv2.imwrite("./tests/facial.png", image_gen[...,::-1])
 
 @pytest.mark.pti
 def test_pti():
+    """pti training pipeline unit test.
+    """
     from copy import deepcopy
-    from ExpressiveEncoding.train import load_model, torch, yaml, edict, stylegan_path, from_tensor, StyleSpaceDecoder
+    from ExpressiveEncoding.train import load_model, yaml, edict, stylegan_path, StyleSpaceDecoder
     from torch.utils.tensorboard import SummaryWriter
-    G = load_model(stylegan_path).synthesis
-    ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))
+    generate_style_gan = load_model(stylegan_path).synthesis
+    ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(generate_style_gan))
 
     face_folder = './tests/face'
     style_latent_path = './tests/pipeline/facial'
@@ -165,28 +181,29 @@ def test_pti():
     snapshots = './tests/pti'
     os.makedirs(snapshots, exist_ok = True)
 
-    with open(config_path) as f:
+    with open(config_path, encoding = 'utf-8') as f:
         config = edict(yaml.load(f, Loader = yaml.CLoader))
 
-    writer = SummaryWriter(f"./tests/pti/tensorboard/")
+    writer = SummaryWriter("./tests/pti/tensorboard/")
 
-    latest_decoder_path = pivot_finetuning(face_folder, style_latent_path, \
+    _ = pivot_finetuning(face_folder, style_latent_path, \
                                            snapshots, ss_decoder, \
                                            config, \
                                            writer = writer
                                           )
-
 @pytest.mark.validate
 def test_validate():
-
+    """the validate function 
+    """
     from copy import deepcopy
-    from ExpressiveEncoding.train import load_model, torch, yaml, edict, stylegan_path, from_tensor, StyleSpaceDecoder, validate_video_gen
-    G = load_model(stylegan_path).synthesis
-    ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))
+    from ExpressiveEncoding.train import load_model, stylegan_path, \
+                                  StyleSpaceDecoder, validate_video_gen
+    generate_style_gan = load_model(stylegan_path).synthesis
+    ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(generate_style_gan))
     state_dict_path = './results/exp002/pti/snapshots/200.pth'
     latent_folder = './results/exp002/facial'
     save_path = "./tests/validate.mp4"
-    validate_video_gen(save_path, 
+    validate_video_gen(save_path,
                        state_dict_path,
                        latent_folder,
                        ss_decoder,
@@ -195,8 +212,8 @@ def test_validate():
 
 @pytest.mark.pipeline
 def test_pipeline():
-
+    """the pipeline of Expressive Encoding codes.
+    """
     save_path = "./tests/pipeline"
     config_path = './tests/'
     expressive_encoding_pipeline(config_path, save_path)
-
