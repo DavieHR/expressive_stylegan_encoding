@@ -170,13 +170,14 @@ def crop(
     for i in pbar_files:
         try:
             image = video_reader.get_next_data()
-        except StopIteration as s:
+        except IndexError as s:
+            logger.info(f"{video_file} reader EOF.")
             break
         h,w = image.shape[:2]
         with mp_face_mesh.FaceMesh(static_image_mode=True,max_num_faces=1,refine_landmarks=True,min_detection_confidence=0.5) as face_mesh:
             results = face_mesh.process(image)
             if not results.multi_face_landmarks:
-                break
+                raise RuntimeError("no face detected.")
             
             for face_landmarks in results.multi_face_landmarks:
                 points_np = np.zeros((len(face_landmarks.landmark), 3), np.float32)
@@ -261,15 +262,16 @@ def crop(
             # # Shrink.
             output_size = 512
 
-            shrink = int(np.floor(qsize / output_size * 0.5))
-            if shrink > 1:
-                resize_or_not = True
-                target_size = (int(np.rint(float(image.shape[1]) / shrink)), int(np.rint(float(image.shape[0]) / shrink)))
-                quad /= shrink
+            #shrink = int(np.floor(qsize / output_size * 0.5))
+            #if shrink > 1:
+            #    resize_or_not = True
+            #    target_size = (int(np.rint(float(image.shape[1]) / shrink)), \
+            #                   int(np.rint(float(image.shape[0]) / shrink)))
+            #    quad /= shrink
             
             quads.append(quad)
 
-            # # Transform.
+    # Transform.
     transform_size = 512
     if len(quads) > 1:
         src_quads = np.array(quads)
@@ -288,7 +290,7 @@ def crop(
     for i in pbar_files:
         try:
             image = video_reader.get_next_data()
-        except StopIteration as s:
+        except IndexError as s:
             break
         out_file = osp.join(out_faces, f'{i}.png')
         img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)

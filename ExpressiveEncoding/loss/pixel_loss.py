@@ -1,4 +1,4 @@
-from torch.nn import MSELoss
+from torch.nn import MSELoss,L1Loss
 
 class L2Loss(MSELoss):
     def __init__(self):

@@ -5,6 +5,8 @@ sys.path.insert(0, os.path.join(where_am_i, "stylegan3"))
 import torch
 import dnnlib
 import legacy
+
+
 from training.networks_stylegan2 import SynthesisNetwork, SynthesisLayer, SynthesisBlock, \
                                         ToRGBLayer, misc, modulated_conv2d, \
                                         bias_act, upfirdn2d 
@@ -41,11 +43,14 @@ class StyleToRGBLayer(CopyLayer):
 class StyleSpaceSythesisLayer(CopyLayer):
     def __init__(self, module):
         super().__init__(module)
-    
-    def forward(self, x, w, noise_mode='random', fused_modconv=True, gain=1, encoded_styles=None):
+        output_channels = self.affine.bias.shape[0]
+        #self.affine_only_bias = torch.nn.Parameter(torch.zeros(output_channels, dtype = torch.float32))       
+
+    def forward(self, x, w, noise_mode='const', fused_modconv=True, gain=1, encoded_styles=None):
         assert noise_mode in ['random', 'const', 'none']
         in_resolution = self.resolution // self.up
         # misc.assert_shape(x, [None, self.weight.shape[1], in_resolution, in_resolution]) # not need to be squre 
+        #styles = w + self.affine_only_bias.to(x)
         styles = w
         noise = None
         if self.use_noise and noise_mode == 'random':
@@ -77,6 +82,7 @@ class StyleSpaceSythesisBlock(CopyLayer):
     def forward(self, x, img, ws, force_fp32=False, fused_modconv=True, update_emas=False, **layer_kwargs):
         _ = update_emas # unused
         w_iter = iter(ws)
+        force_fp32 = True
         if ws[0].device.type != 'cuda':
             force_fp32 = True
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
@@ -114,7 +120,6 @@ class StyleSpaceSythesisBlock(CopyLayer):
             y = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
             y = y.to(dtype=torch.float32, memory_format=torch.contiguous_format)
             img = img.add_(y) if img is not None else y
-
         assert x.dtype == dtype
         assert img is None or img.dtype == torch.float32
         return x, img
@@ -123,13 +128,15 @@ class StyleSpaceDecoder(CopyLayer):
     def __init__(
                  self,
                  stylegan_path: str = None,
-                 synthesis: object = None
+                 synthesis: object = None,
+                 to_resolution: int = 1024
                 ):
         if synthesis is not None:
             module = synthesis
         else:
             module = load_model(stylegan_path).synthesis
         super().__init__(module)
+        self.block_resolutions = [x for x in self.block_resolutions if x <= to_resolution]
         for res in self.block_resolutions:
             block = getattr(self, f"b{res}")
             block_forked = StyleSpaceSythesisBlock(block)

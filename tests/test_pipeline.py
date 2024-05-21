@@ -76,7 +76,7 @@ def test_pose():
 
     with open('./tests/pose.yaml', encoding = "utf-8") as f:
         config_pose = edict(yaml.load(f, Loader = yaml.CLoader))
-
+    
     w_with_pose, image_posed = pose_optimization( \
                                                    selected_id_latent, \
                                                    selected_id_image, \
@@ -99,7 +99,8 @@ def test_facial_attribute():
     from ExpressiveEncoding.train import load_model, torch, get_detector, \
                                          yaml, edict, stylegan_path, \
                                          from_tensor, StyleSpaceDecoder, \
-                                         LossRegisterBase
+                                         LossRegisterBase, Timer
+    t = Timer()
     detector = get_detector()
     generate_style_gan = load_model(stylegan_path).synthesis
     ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(generate_style_gan))

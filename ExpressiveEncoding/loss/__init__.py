@@ -1,6 +1,6 @@
 from easydict import EasyDict as edict
 from .lpips import LPIPS
-from .pixel_loss import L2Loss
+from .pixel_loss import L2Loss, L1Loss
 from .frame_diff_based_loss import FDBLoss
 from .face_parsing_loss import FaceParsingLoss
 from .id_loss import IDLoss
@@ -25,6 +25,8 @@ class LossRegisterBase:
             
             loss_instantiate = eval(_loss.name)(**_this_loss_config)
             setattr(self, loss_alias, loss_instantiate)
+            setattr(self, loss_alias + "_weight", _loss.weights)
+
 
     def forward(
                 self,
@@ -37,9 +39,8 @@ class LossRegisterBase:
                  self,
                  *args,
                  is_gradient: bool = True,
-                 **kwargs,
+                 **kwargs
                 ):
-
         ret = self.forward(*args, **kwargs)
         assert isinstance(ret, dict), "expect return type is Dict."
         total = 0

@@ -1,0 +1,3 @@
+threshold: 0.014
+epochs: 200
+length: 1

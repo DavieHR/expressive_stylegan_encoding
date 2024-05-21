@@ -6,10 +6,7 @@ import pytest
 sys.path.insert(0, os.getcwd())
 
 from ExpressiveEncoding.decoder import StyleSpaceDecoder, load_model
-
-stylegan_path = "./codes/encoder4editing/pretrained_models/ffhq.pkl"
-latent_code_path = "./codes/encoder4editing/portraits/input_face1/latents.pt"
-optimized_latent_path = "codes/optimized_latent/facial_edit_black_every_id.pt"
+from ExpressiveEncoding.train import stylegan_path
 
 @pytest.mark.load
 def test_load_model():
@@ -22,11 +19,12 @@ def test_decoder():
     """ test for StyleSpaceDecoder Class
     """
     import cv2
-    ss_decoder = StyleSpaceDecoder(stylegan_path)
-    latent_codes = torch.load(latent_code_path)
-    ss = ss_decoder.get_style_space(latent_codes[0:1])
+    ss_decoder = StyleSpaceDecoder(stylegan_path, to_resolution = 512)
+    latent_codes = torch.randn((1,18,512)).to('cuda')
+    ss = ss_decoder.get_style_space(latent_codes)
     out_tensor = ss_decoder(ss, noise_mode = 'const')
     image = ((out_tensor+1) * 0.5).detach().squeeze().permute((1,2,0)).cpu().numpy()
+    print(image.shape)
     cv2.imwrite("ss.png", image * 255.0)
 
 @pytest.mark.ss
