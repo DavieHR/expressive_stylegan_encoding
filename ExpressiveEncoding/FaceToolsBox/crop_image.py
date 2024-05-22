@@ -313,7 +313,7 @@ def main(in_dir: str,
          out_dir: str, 
          use_first_eye_to_mouth: bool = True,
          sigam: int = 2):
-    crop(in_dir, out_dir, use_first_eye_to_mouth, sigma)
+    crop(in_dir, out_dir, use_first_eye_to_mouth, sigam)
 
 if __name__=='__main__':
     main()
