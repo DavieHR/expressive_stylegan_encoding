@@ -174,8 +174,10 @@ def crop(
             logger.info(f"{video_file} reader EOF.")
             break
         h,w = image.shape[:2]
-        with mp_face_mesh.FaceMesh(static_image_mode=True,max_num_faces=1,refine_landmarks=True,min_detection_confidence=0.5) as face_mesh:
-            results = face_mesh.process(image)
+        with mp_face_mesh.FaceMesh(static_image_mode=False,max_num_faces=1,refine_landmarks=True,min_detection_confidence=0.5) as face_mesh:
+            results = face_mesh.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            print(results)
+            print(i)
             if not results.multi_face_landmarks:
                 raise RuntimeError("no face detected.")
             

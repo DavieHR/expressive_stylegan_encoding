@@ -8,6 +8,7 @@
 *.pth
 *.swp
 *.swo
+*.zip
 tags
 
 ExpressiveEncoding/FaceToolsBox/*.mp4
