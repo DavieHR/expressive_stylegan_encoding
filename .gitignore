@@ -9,6 +9,8 @@
 *.swp
 *.swo
 *.zip
+*.yaml
+
 tags
 
 ExpressiveEncoding/FaceToolsBox/*.mp4
