@@ -522,7 +522,7 @@ def facial_attribute_optimization(
         for region in region_names:
             gammas[alphas_relative_index[region]] = torch.exp(-1.5 * gammas[alphas_relative_index[region]] / gammas[alphas_relative_index[region]].max())
 
-    tensors_to_optim = [dict(params = alpha_tensor[i], lr = gammas[i].item()) for i in range(32)]
+    tensors_to_optim = [dict(params = alpha_tensor[i], lr = 2 * gammas[i].item()) for i in range(32)]
     optim = torch.optim.AdamW(tensors_to_optim, amsgrad=True)
     sche = torch.optim.lr_scheduler.StepLR(optim, step_size=10, gamma=0.8)
 
@@ -538,7 +538,7 @@ def facial_attribute_optimization(
     if alpha_tensor_pre is None:
         epochs = 100
     else:
-        epochs = 10
+        epochs = 15
     epochs = kwargs.get("epochs", epochs)
     writer = kwargs.get("writer", None)
 
@@ -806,7 +806,7 @@ def facial_attribute_optimization_ssltent(
     if alpha_tensor_pre is None:
         epochs = 100
     else:
-        epochs = 100
+        epochs = 30
     epochs = kwargs.get("epochs", epochs)
     writer = kwargs.get("writer", None)
 
@@ -891,8 +891,9 @@ def facial_attribute_optimization_ssltent(
         dlatents_all = update_alpha()
         # image_tensor_after_update_all = ss_decoder(dlatents_all)
     # image_gen = (from_tensor(image_tensor_after_update_all) * 0.5 + 0.5) * 255.0
-    if alpha_tensor_pre is None:
-        alpha_tensor_pre = alpha_tensor
+    # if alpha_tensor_pre is None:
+    #     alpha_tensor_pre = alpha_tensor
+    alpha_tensor_pre = alpha_tensor
     image_gen = None
     images_tensor = gt_images_tensor
     return dlatents_all,\
@@ -1174,7 +1175,7 @@ def expressive_encoding_pipeline(
                      "lpips_loss": lpips_loss
                    }
 
-    class FacialLossRegister2(LossRegisterBase):
+    class FacialLossRegister(LossRegisterBase):
         def forward(self,
                     x,
                     y,
@@ -1208,7 +1209,7 @@ def expressive_encoding_pipeline(
 
             return ret
 
-    class FacialLossRegister(LossRegisterBase):
+    class FacialLossRegister2(LossRegisterBase):
         def forward(self,
                     x,
                     y,
@@ -1261,7 +1262,7 @@ def expressive_encoding_pipeline(
 
     optimized_latents = list(filter(lambda x: x.endswith('pt'), os.listdir(stage_three_path)))
     logger.info(f"optimized_latents {optimized_latents}")
-    start_idx = len(optimized_latents)
+    start_idx = len(optimized_latents)-1
     if start_idx > 0:
         last_tensor_path = os.path.join(stage_three_path, "last_tensor.pt")
         if not os.path.exists(last_tensor_path):
@@ -1332,28 +1333,28 @@ def expressive_encoding_pipeline(
         gt_ss_latent_path = '/data1/chenlong/0517/video/0522/kanghui_0/results/man3_chenl_0521/data/style_space'
         gt_ss_latent = torch.load(os.path.join(gt_ss_latent_path, f"{ii+1}.pt"))
 
-        # style_space_latent, images_tensor_last, gt_images_tensor_last, gammas, image_gen, facial_param = \
-        #         facial_attribute_optimization(w_with_pose, \
-        #                                       gen_image,\
-        #                                       face_info_from_gen,\
-        #                                       facial_loss_register, \
-        #                                       ss_decoder,\
-        #                                       gammas,\
-        #                                       images_tensor_last,\
-        #                                       gt_images_tensor_last \
-        #                                      )
-
         style_space_latent, images_tensor_last, gt_images_tensor_last, gammas, image_gen, facial_param = \
-            facial_attribute_optimization_ssltent(w_with_pose, \
-                                                  gen_image, \
-                                                  face_info_from_gen, \
-                                                  facial_loss_register, \
-                                                  ss_decoder, \
-                                                  gammas, \
-                                                  images_tensor_last, \
-                                                  gt_images_tensor_last, \
-                                                  gt_ss_latent,
-                                                  )
+                facial_attribute_optimization(w_with_pose, \
+                                              gen_image,\
+                                              face_info_from_gen,\
+                                              facial_loss_register, \
+                                              ss_decoder,\
+                                              gammas,\
+                                              images_tensor_last,\
+                                              gt_images_tensor_last \
+                                             )
+
+        # style_space_latent, images_tensor_last, gt_images_tensor_last, gammas, image_gen, facial_param = \
+        #     facial_attribute_optimization_ssltent(w_with_pose, \
+        #                                           gen_image, \
+        #                                           face_info_from_gen, \
+        #                                           facial_loss_register, \
+        #                                           ss_decoder, \
+        #                                           gammas, \
+        #                                           images_tensor_last, \
+        #                                           gt_images_tensor_last, \
+        #                                           gt_ss_latent,
+        #                                           )
 
         torch.save([x.detach().cpu() for x in style_space_latent], os.path.join(stage_three_path, f"{ii+1}.pt"))
         torch.save([images_tensor_last, gt_images_tensor_last], os.path.join(stage_three_path, "last_tensor.pt"))
@@ -1369,42 +1370,42 @@ def expressive_encoding_pipeline(
 
 
     # stage 4.
-    # snapshots = os.path.join(stage_four_path, "snapshots")
-    # os.makedirs(snapshots, exist_ok = True)
-    # snapshot_files = os.listdir(snapshots)
-    #
-    # epochs = 30
-    # pti_or_not = True
-    # resume_path = None
-    # if os.path.exists(snapshots) and len(snapshot_files):
-    #     snapshot_paths = sorted(snapshot_files, key = lambda x: int(x.split('.')[0]))
-    #     latest_decoder_path = os.path.join(snapshots, snapshot_paths[-1])
-    #     epoch_latest = int(''.join(re.findall('[0-9]+' ,snapshot_paths[-1])))
-    #     pti_or_not = False
-    #     if epoch_latest < epochs:
-    #         pti_or_not = True
-    #         resume_path = latest_decoder_path
-    #
-    # if pti_or_not:
-    #     os.makedirs(snapshots, exist_ok = True)
-    #     latest_decoder_path = pivot_finetuning(face_folder_path, \
-    #                                            stage_three_path, \
-    #                                            snapshots, \
-    #                                            ss_decoder, \
-    #                                            config_pti, \
-    #                                            writer = writer, \
-    #                                            resume_path = resume_path
-    #                                           )
-    # logger.info(f"latest model path is {latest_decoder_path}")
-    # #latest_decoder_path = './results/pivot_001/snapshots/100.pth'
-    # validate_video_path = os.path.join(save_path, "validate_video.mp4")
-    # validate_video_gen(
-    #                     validate_video_path,
-    #                     latest_decoder_path,
-    #                     stage_three_path,
-    #                     ss_decoder,
-    #                     len(gen_file_list),
-    #                     face_folder_path
-    #                   )
-    # logger.info(f"validate video located in {validate_video_path}")
+    snapshots = os.path.join(stage_four_path, "snapshots")
+    os.makedirs(snapshots, exist_ok = True)
+    snapshot_files = os.listdir(snapshots)
+
+    epochs = 30
+    pti_or_not = True
+    resume_path = None
+    if os.path.exists(snapshots) and len(snapshot_files):
+        snapshot_paths = sorted(snapshot_files, key = lambda x: int(x.split('.')[0]))
+        latest_decoder_path = os.path.join(snapshots, snapshot_paths[-1])
+        epoch_latest = int(''.join(re.findall('[0-9]+' ,snapshot_paths[-1])))
+        pti_or_not = False
+        if epoch_latest < epochs:
+            pti_or_not = True
+            resume_path = latest_decoder_path
+
+    if pti_or_not:
+        os.makedirs(snapshots, exist_ok = True)
+        latest_decoder_path = pivot_finetuning(face_folder_path, \
+                                               stage_three_path, \
+                                               snapshots, \
+                                               ss_decoder, \
+                                               config_pti, \
+                                               writer = writer, \
+                                               resume_path = resume_path
+                                              )
+    logger.info(f"latest model path is {latest_decoder_path}")
+    #latest_decoder_path = './results/pivot_001/snapshots/100.pth'
+    validate_video_path = os.path.join(save_path, "validate_video.mp4")
+    validate_video_gen(
+                        validate_video_path,
+                        latest_decoder_path,
+                        stage_three_path,
+                        ss_decoder,
+                        len(gen_file_list),
+                        face_folder_path
+                      )
+    logger.info(f"validate video located in {validate_video_path}")
 

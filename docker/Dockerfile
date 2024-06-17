@@ -45,6 +45,14 @@ USER user
 ENV HOME=/home/user
 RUN chmod 777 /home/user
 
+# update third_party packages.
+RUN aws configure set aws_access_key_id AKIA5TZUX3SFS56U2XEX
+RUN aws configure set aws_secret_access_key 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
+RUN aws configure set region cn-northwest-1
+
+COPY requirements_aws.txt /app
+COPY third_party_install.sh /app
+RUN bash /app/third_party_install.sh /app/requirements_aws.txt
 COPY requirements.txt /app
 RUN pip install -r /app/requirements.txt
 

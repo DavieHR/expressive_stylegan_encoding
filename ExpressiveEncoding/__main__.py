@@ -1,5 +1,5 @@
 import click
-from .train import expressive_encoding_pipeline
+from .train_speed_pipeline_w_s_nopose import expressive_encoding_pipeline
 from .puppet import puppet, puppet_video
 
 @click.command()

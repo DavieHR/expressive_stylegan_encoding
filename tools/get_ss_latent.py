@@ -11,8 +11,8 @@ from ExpressiveEncoding.train import StyleSpaceDecoder, Encoder4EditingWrapper, 
                                      to_tensor, torch, logger
 
 @click.command()
-@click.option('--from_path')
-@click.option('--to_path')
+@click.option('--from_path', default = '/data1/chenlong/0517/video/0522/lady9_bad_ft/results/lady9_chenl_0521/data/smooth')
+@click.option('--to_path', default = '/data1/chenlong/0517/video/0522/lady9_bad_ft/results/lady9_chenl_0521/data/s_latents')
 def get_ss_latents(
                     from_path: str,
                     to_path: str

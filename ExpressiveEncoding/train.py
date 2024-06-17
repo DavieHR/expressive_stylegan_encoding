@@ -198,6 +198,7 @@ def select_id_latent(
                      myself_e4e_path: str = None
                     ):
     from .loss.id_loss import IDLoss
+    myself_e4e_path = '/data1/chenlong/local_code/expressive_talkinghead_encoding-main/ExpressiveEncoding/third_party/models/e4e_ffhq_encode.pt'
     e4e = Encoder4EditingWrapper(e4e_path if myself_e4e_path is None else myself_e4e_path)
 
     path = paths["driving_face_path"]
@@ -933,7 +934,7 @@ def expressive_encoding_pipeline(
 
     optimized_latents = list(filter(lambda x: x.endswith('pt'), os.listdir(stage_three_path)))
     logger.info(f"optimized_latents {optimized_latents}")
-    start_idx = len(optimized_latents)
+    start_idx = len(optimized_latents)-1
     if start_idx > 0:
         last_tensor_path = os.path.join(stage_three_path, "last_tensor.pt")
         if not os.path.exists(last_tensor_path):

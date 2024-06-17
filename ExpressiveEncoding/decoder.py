@@ -17,6 +17,8 @@ def load_model(network_pkl, device = "cuda"):
             G = legacy.load_network_pkl(fp)['G_ema'].requires_grad_(False).to(device) # type: ignore
     elif network_pkl.endswith("pt"):
         G = torch.load(network_pkl)
+    elif network_pkl.endswith("pth"):
+        G = torch.load(network_pkl)
     return G
 
 class CopyLayer(torch.nn.Module):

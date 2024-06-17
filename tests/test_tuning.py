@@ -14,7 +14,7 @@ def test_pose():
     for p in G.parameters():
         p.requires_grad = False
     pose_edit = PoseEdit()
-    
+
     tuning_script_path = "./script/exp005"
     test_path = "./results/exp005/"
 
@@ -57,8 +57,6 @@ def test_pose():
                                         selected_id_image,
                                         detector
                                      )
-
-    for 
 
     face_info_from_gen = get_face_info(gen_image, detector)
 

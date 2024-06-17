@@ -1,0 +1,15 @@
+image_path: "/data1/chenlong/0517/video/0522/kanghui_0/results/man3_chenl_0521/puppet/woman/0.jpg"
+latent_path: "/data1/chenlong/0517/video/0522/kanghui_0/results/man3_chenl_0521/expressive"
+video_image_path: "/data1/chenlong/0517/video/0522/kanghui_0/results/man3_chenl_0521/data/smooth"
+pti:
+
+    losses:
+            - 
+              alias: l2
+              name: L2Loss
+              weights: 1.0
+            - 
+              alias: lpips
+              name: LPIPS
+              weights: 1.0
+

@@ -1,6 +1,6 @@
 from easydict import EasyDict as edict
 from .lpips import LPIPS
-from .pixel_loss import L2Loss, L1Loss
+from .pixel_loss import L2Loss, L1Loss,MSELoss
 from .frame_diff_based_loss import FDBLoss
 from .face_parsing_loss import FaceParsingLoss
 from .id_loss import IDLoss
