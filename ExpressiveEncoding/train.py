@@ -815,7 +815,7 @@ def pivot_finetuning(
             image = image.to(device)  
             image_gen = ss_decoder(pivot)
 
-            #ret = loss_register(image, image_gen, mask_boundary, is_gradient = False)
+            ret = loss_register(image, image_gen, mask_boundary, is_gradient = False)
             if pivot_random is None:
                 ret = loss_register(image, image_gen, mask_boundary, is_gradient = False)
             else:
