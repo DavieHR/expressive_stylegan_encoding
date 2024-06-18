@@ -12,11 +12,12 @@ import re
 
 import numpy as np
 
-
 from tqdm import tqdm
 from easydict import EasyDict as edict
 from DeepLog import logger, Timer
 from DeepLog.logger import logging
+from torchvision import transforms
+from PIL import Image
 current_dir = os.getcwd()
 
 from .pose_edit_with_flow import PoseEdit
@@ -27,6 +28,10 @@ from .FaceToolsBox.alignment import get_detector, infer, \
 from .FaceToolsBox.crop_image import crop
 
 from .loss import LossRegisterBase
+
+from .loss.FaceParsing.model import BiSeNet
+
+
 from .utils import to_tensor, from_tensor
 points = [(10, 338),(338, 297),(297, 332),
           (332, 284),(284, 251),(251, 389),
@@ -82,19 +87,56 @@ alpha_S_indexes = [
 
 alphas = list(zip(alpha_indexes, alpha_S_indexes))
 
-
 output_copy_region="[[274,494,80,432]]"
 soft_mask_region="[[340,494,130,-130],[274,340,130,-130]]"
 regions = eval(soft_mask_region)
 output_copy_region = eval(output_copy_region)
 
+where_am_i = os.path.dirname(os.path.realpath(__file__))
+class face_parsing:
+    def __init__(self, path = os.path.join(where_am_i, "third_party", "models", "79999_iter.pth")):
+
+        net = BiSeNet(19) 
+        state_dict = torch.load(path)
+        net.load_state_dict(state_dict)
+        net.eval()
+        net.to("cuda:0")
+        self.net = net
+        self.to_tensor = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
+
+    def __call__(self, x):
+
+        h, w = x.shape[:2]
+        x = Image.fromarray(np.uint8(x))
+        image = x.resize((512, 512), Image.BILINEAR)
+        img = self.to_tensor(image).unsqueeze(0).to("cuda:0")
+        out = self.net(img)[0].detach().squeeze(0).cpu().numpy().argmax(0)
+        mask = np.zeros_like(out)
+        for label in list(range(1,  7)) + list(range(10, 14)):
+            mask[out == label] = 1
+        out = cv2.resize(np.float32(mask), (w,h))
+        return out[..., np.newaxis]
+
+# instance face parse
+
+face_parse = face_parsing()
+
 def get_mask_by_region():
     _mask  = np.zeros((512,512,3), np.float32)
     _mask_dilate = _mask.copy()
+    pad = 20
     for region in output_copy_region:
         y1,y2,x1,x2 = region
         _mask[y1:y2,x1:x2,:] = 1
-        _mask_dilate[y1:512,x1:x2,:] = 1
+        _mask_dilate[y1:y1 + pad, x1:x2, :] = 1
+        _mask_dilate[y2 - pad :y2, x1:x2, :] = 1
+        _mask_dilate[y1:y2, x1 : x1 + pad, :] = 1
+        _mask_dilate[y1:y2, x2 - pad : x2, :] = 1
+
+
     return _mask, _mask_dilate
 
 def get_up_bottom_mask():
@@ -256,15 +298,48 @@ def pose_optimization(
         t = Timer()
 
     h,w = ground_truth.shape[:2]
-    id_image = np.float32(id_image / 255.0)
-    ground_truth = np.float32(ground_truth / 255.0)
     if h != 1024:
         ground_truth = cv2.resize(ground_truth, (1024,1024))
+    mask_gt = face_parse(ground_truth)
 
+    id_image = np.float32(id_image / 255.0)
+    ground_truth = np.float32(ground_truth / 255.0)
+
+    """
     mask_gt = np.zeros((h,w,1))
     landmarks_gt = np.int32(res_gt.landmarks)
     points_gt = np.array([landmarks_gt[x[0],:] for x in points]).astype(np.int32)
     mask_gt = cv2.fillPoly(mask_gt, np.int32([points_gt]), (1,1,1))
+    """
+
+    """
+    # find top y
+    h, w = mask_gt.shape[:2]
+
+    top_y = 0
+    for i in range(h):
+        if mask_gt[i, :].sum() > 0:
+            top_y = i
+            break
+
+    left_x = 0
+    # find left x
+    for i in range(w):
+        if mask_gt[:, i].sum() > 0:
+            left_x = i
+            break
+
+    # find right x
+    right_x = 0
+    for i in range(w):
+        if mask_gt[:, -i].sum() > 0:
+            right_x = -i
+            break
+
+    pad_top = 100
+    pad_down = 200
+    mask_gt[top_y - pad_top: top_y + pad_down, left_x: right_x] = 1
+    """
 
     mask_id = np.zeros((h,w,1))
     landmarks_id = np.int32(res_id.landmarks)
@@ -275,9 +350,11 @@ def pose_optimization(
     mask_to_paste, _ = get_mask_by_region()
     mask_to_paste_resize = cv2.resize(mask_to_paste, (1024,1024))
     mask_to_paste_resize_tensor = to_tensor(mask_to_paste_resize).to("cuda")
+    
+    mask_gt_region = mask_gt
 
     #mask_gt_region = np.ones_like(mask_gt) #np.int32((mask_to_paste_resize + mask_gt) >= 1)
-    mask_gt_region = np.int32((mask_to_paste_resize + mask_gt) >= 1)
+    #mask_gt_region = np.int32((mask_to_paste_resize + mask_gt) >= 1)
 
     pad = 50
     mask_facial = np.ones((1024,1024,1), dtype = np.float32)
@@ -315,7 +392,7 @@ def pose_optimization(
     pitch_to_optim.requires_grad = True
 
     optim = torch.optim.Adam([yaw_to_optim, pitch_to_optim], lr = kwargs.get("lr", 1.0))
-    sche = torch.optim.lr_scheduler.StepLR(optim, step_size=1000, gamma=0.5)
+    sche = torch.optim.lr_scheduler.StepLR(optim, step_size=50, gamma=0.5)
     if VERBOSE:
         t.tic("optimize pose")
 
@@ -349,7 +426,7 @@ def pose_optimization(
             writer.add_scalars(f'pose_estimate/scalar', ret, global_step = epoch)
             writer.add_scalars(f'pose_estimate/pose', dict(yaw = yaw_to_optim, pitch = pitch_to_optim), global_step = epoch)
             #images_in_training = torch.cat(((1 - mask_to_paste_resize_tensor) * gt_tensor + gen_tensor * mask_to_paste_resize_tensor), dim = 2)
-            images_in_training = torch.cat(((1 - mask_to_paste_resize_tensor) * gt_tensor + gen_tensor * mask_to_paste_resize_tensor, mask_gt_tensor * gen_tensor, mask_gt_tensor * gt_tensor, mask_facial_tensor * gen_tensor), dim =2)
+            images_in_training = torch.cat(((1 - mask_gt_tensor) * gt_tensor + gen_tensor * mask_gt_tensor, mask_gt_tensor * gen_tensor, mask_gt_tensor * gt_tensor, mask_facial_tensor * gen_tensor), dim =2)
             writer.add_image(f'pose_estimate/image', make_grid(images_in_training.detach(),normalize=True, scale_each=True), epoch)
         optim.step()
         sche.step()
@@ -627,34 +704,48 @@ def pivot_finetuning(
     from torchvision import transforms
     from torchvision.utils import make_grid
     from torch.utils.data import DataLoader
-    from .ImagesDataset import ImagesDataset
+    from .ImagesDataset import ImagesDataset, ImagesDatasetV2, ImagesDatasetV3
 
     resolution = kwargs.get("resolution", 1024)
     batchsize = kwargs.get("batchsize", 1)
     lr = kwargs.get("lr", 3e-4)
     resume_path = kwargs.get("resume_path", None)
 
+    expressive_path = config.expressive_path if hasattr(config, "expressive_path") else None
+    ss_path = config.ss_path if hasattr(config, "ss_path") else None
+
     def get_dataloader(
                       ):
-        dataset = ImagesDataset(path_images, path_style_latents, transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-            transforms.Resize(size = (resolution, resolution))]))
+
+        if expressive_path is None:
+            dataset = ImagesDataset(path_images, path_style_latents, transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+                transforms.Resize(size = (resolution, resolution))]))
+        else:
+            dataset = ImagesDatasetV3(path_images, path_style_latents, expressive_path, ss_path, transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+                transforms.Resize(size = (resolution, resolution))]))
+
         return DataLoader(dataset, batch_size = batchsize, shuffle = False, num_workers = 8)
 
     class LossRegister(LossRegisterBase):
         def forward(self, 
                     x,
                     y,
-                    mask
+                    mask,
+                    y_random =None
                    ):
             l2 = self.l2(x,y).mean() * self.l2_weight
             lpips = self.lpips(x,y).mean() * self.lpips_weight
         
-            #x = x * mask
-            #y = y * mask
-            #l2_with_mask = self.l2_mask(x,y).mean() * self.l2_mask_weight
-            #lpips_with_mask = self.lpips_mask(x,y).mean() * self.lpips_mask_weight
+            #if y_random is not None:
+            if mask is not None:
+                x = x * mask #(1 - mask)
+                y = y * mask #(1 - mask)
+                l2_with_mask = self.l2_mask(x, y).mean() * self.l2_mask_weight
+                lpips_with_mask = self.lpips_mask(x, y).mean() * self.lpips_mask_weight
 
             return {
                     "l2": l2,
@@ -672,9 +763,12 @@ def pivot_finetuning(
     device = "cuda:0"
     #parameters = []
     #for k, v in ss_decoder.named_parameters():
-    #    if "affine_only_bias" in k:
+    #    if "affine" in k:
+    #        logger.info(f"{k} add into optimization list.")
+    #        v.requires_grad = True
     #        parameters.append(dict(params = v, lr = lr))
 
+    ss_decoder.to(device)
     optim = torch.optim.Adam(ss_decoder.parameters(), lr = lr)
     #optim = torch.optim.Adam(parameters, lr = lr)
     total_idx = 0
@@ -695,12 +789,13 @@ def pivot_finetuning(
 
     #mask = get_up_bottom_mask()
     #mask = mask.to(device)
-    mask_to_paste, mask_dilate_to_paste = get_mask_by_region()
+    mask_to_paste, mask_boundary = get_mask_by_region()
     mask_to_paste_resize = cv2.resize(mask_to_paste, (resolution,resolution))
-    mask_to_paste_resize_tensor = to_tensor(mask_to_paste_resize).to("cuda")
+    mask = to_tensor(mask_to_paste_resize).to("cuda")
+    mask_boundary = None #to_tensor(mask_boundary).to("cuda")
 
-    mask_dilate_to_paste_resize = cv2.resize(mask_dilate_to_paste, (resolution,resolution))
-    mask = to_tensor(mask_dilate_to_paste_resize).to("cuda")
+    #mask_dilate_to_paste_resize = cv2.resize(mask_dilate_to_paste, (resolution,resolution))
+    #mask = to_tensor(mask_dilate_to_paste_resize).to("cuda")
 
     min_loss = 0xffff # max value.
     internal_size = 100 if not DEBUG else 100
@@ -709,10 +804,25 @@ def pivot_finetuning(
         sample_loss = 0
         sample_count = 0
         for idx, (image, pivot) in enumerate(dataloader):
-            pivot = [x.to(device) for x in pivot]
+
+            pivot_random = None
+            if isinstance(pivot, list):
+                #pivot, pivot_random = [x.to(device) for x in pivot[0]], [y.to(device) for y in pivot[1]]
+                pivot[0] = ss_decoder.get_style_space(pivot[0].to(device))
+                pivot = [(x.to(device), y.to(device)) for (x, y) in zip(pivot[0], pivot[1])]
+            else:
+                pivot = [x.to(device) for x in pivot]
             image = image.to(device)  
             image_gen = ss_decoder(pivot)
-            ret = loss_register(image, image_gen, mask, is_gradient = False)
+
+            ret = loss_register(image, image_gen, mask_boundary, is_gradient = False)
+            """
+            if pivot_random is None:
+                ret = loss_register(image, image_gen, mask_boundary, is_gradient = False)
+            else:
+                image_random = ss_decoder(pivot_random)
+                ret = loss_register(image, image_gen, mask_boundary, image_random, is_gradient = False)
+            """
             loss = ret['loss']
             optim.zero_grad()
             b = image_gen.shape[0]
@@ -725,8 +835,12 @@ def pivot_finetuning(
                 string_to_info = reduce(lambda x, y: x + ', ' + y , [f'{k} {v.mean().item()}' for k, v in ret.items()])
                 logger.info(f"{idx+1}/{epoch}/{epochs}: {string_to_info}")
 
-                if idx == 0 and writer is not None:
-                    image_to_show = torch.cat((image_gen, image, mask_to_paste_resize_tensor * image_gen + (1 - mask_to_paste_resize_tensor) * image),dim = 2)
+                #if idx == 0 and writer is not None:
+                if writer is not None:
+                    image_to_show = torch.cat((image_gen, image, mask * image_gen + (1 - mask) * image),dim = 2)
+                    if pivot_random is not None:
+                        image_to_show = torch.cat((image_to_show, mask * image_random + (1 - mask) * image, image_random * mask_boundary), dim = 2)
+
                     writer.add_image(f'image', make_grid(image_to_show.detach(),normalize=True, scale_each=True), total_idx)
                 if writer is not None:
                     writer.add_scalars('loss', ret, total_idx)
@@ -850,8 +964,7 @@ def expressive_encoding_pipeline(
     else:
         gen_file_list, selected_id_image, selected_id_latent, selected_id = select_id_latent(files_path,
                                                                                              G,
-                                                                                             stage_one_path,
-                                                                                             myself_e4e_path = os.path.join(os.getcwd(), "ExpressiveEncoding", "encoder4editing", "exp003", "checkpoints", "best_model.pt")
+                                                                                             stage_one_path
                                                                                             )
         torch.save(
                     [
@@ -1025,7 +1138,8 @@ def expressive_encoding_pipeline(
 
     if pti_or_not:
         os.makedirs(snapshots, exist_ok = True)
-        latest_decoder_path = pivot_finetuning(face_folder_path, \
+        latest_decoder_path = pivot_finetuning(
+                                               face_folder_path, \
                                                stage_three_path, \
                                                snapshots, \
                                                ss_decoder, \

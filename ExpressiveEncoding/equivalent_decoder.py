@@ -9,6 +9,9 @@ from .decoder import StyleToRGBLayer, StyleSpaceSythesisLayer, StyleSpaceSythesi
                      bias_act, misc, StyleSpaceDecoder
 
 from .decoder import upfirdn2d as upf
+
+
+from DeepLog import logger
 #import upf._parse_padding, upf._get_filter_size, upf._parse_scaling
 
 def upsample2d(x, conv_resample, up=2, padding=0, flip_filter=False, gain=1, impl='ref'):
@@ -153,15 +156,19 @@ def modulated_conv2d(
         weight = weight * (1 / np.sqrt(in_channels * kh * kw) / weight.norm(float('inf'), dim=[1,2,3], keepdim=True)) # max_Ikk
         styles = styles / styles.norm(float('inf'), dim=1, keepdim=True) # max_I
     """
-
-    # Calculate per-sample weights and demodulation coefficients.
     out_channels, in_channels, kh, kw = conv.weight.shape
+    if up > 1:
+        w = conv.weight.transpose(0,1) * styles.reshape(batch_size, 1, -1, 1, 1) # [NOIkk]
+    else:
+        w = conv.weight * styles.reshape(batch_size, 1, -1, 1, 1) # [NOIkk]
+
+    """
+    w = w * (1 / w.norm(float('inf'), dim=[1,2,3], keepdim=True)) # max_Ikk
+    styles = styles / styles.norm(float('inf'), dim=1, keepdim=True) # max_I
+    """
+    # Calculate per-sample weights and demodulation coefficients.
     dcoefs = torch.ones(batch_size, out_channels, 1, 1).to(x)
     if demodulate:
-        if up > 1:
-            w = conv.weight.transpose(0,1) * styles.reshape(batch_size, 1, -1, 1, 1) # [NOIkk]
-        else:
-            w = conv.weight * styles.reshape(batch_size, 1, -1, 1, 1) # [NOIkk]
         dcoefs = (w.square().sum(dim=[2,3,4]) + 1e-8).rsqrt() # [NO]
         dcoefs = dcoefs.reshape(batch_size, -1, 1, 1)
 

@@ -43,7 +43,7 @@ def finetune_pose(
     id_path = os.path.join(training_path, "cache.pt")
     gen_file_list, selected_id_image, selected_id_latent, selected_id = torch.load(id_path)
     if decoder_path is not None:
-        G.load_state_dict(torch.load(decoder_path))
+        G.load_state_dict(torch.load(decoder_path), False)
         data_path = os.path.join(training_path, "data", "smooth")
         gen_file_list = [os.path.join(data_path, x) for x in sorted(os.listdir(data_path), key = lambda y: int(''.join(re.findall('[0-9]+',y))))]
         selected_id_image = cv2.cvtColor(cv2.imread(gen_file_list[selected_id]), cv2.COLOR_BGR2RGB)
@@ -104,7 +104,6 @@ def finetune_pose(
         ## resize like gen image
         gen_image = cv2.resize(gen_image, tuple(selected_id_image.shape[:2][::-1]))
 
-
         face_info_from_gen = get_face_info(gen_image, detector)
         logger.info("get face info.")
         if resume_path is not None:
@@ -112,7 +111,6 @@ def finetune_pose(
             pose_param = param
         else:
             pose_param = None
-
 
         w_with_pose, image_posed, pose_param = pose_optimization(
                            selected_id_latent.detach(),
