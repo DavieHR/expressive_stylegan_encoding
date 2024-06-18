@@ -46,9 +46,9 @@ def get_ss_latents_from_attribute(
     for i, _file in enumerate(p_bar):
         param = torch.load(_file)
         latent = torch.load(os.path.join(pose_latent_path, f'{i + 1}.pt'))
-        ss_latent = decoder.get_style_space(latent)
-        ss_latent_updated = update_alpha(ss_latent, param[1])
-        ss_latent_updated = [x.detach().cpu() for x in ss_latent_updated]
+        ss_latent= decoder.get_style_space(latent)
+        #ss_latent_updated = update_alpha(ss_latent, param[1])
+        #ss_latent_updated = [x.detach().cpu() for x in ss_latent_updated]
         torch.save(ss_latent_updated, os.path.join(to_path, f'{i + 1}.pt'))
         #latent_list.append(ss_latent)
     #logger.info(f"latent saved into {to_path}.")

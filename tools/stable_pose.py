@@ -32,7 +32,7 @@ def stable_pose(
     detector = get_detector()
 
     # read all pose to memory.
-    pose_list = [torch.load(os.path.join(pose_path, x)).detach().cpu().numpy() for x in sorted(os.listdir(pose_path), key = lambda x: int(''.join(re.findall('[0-9]+', x))))]
+    pose_list = [torch.load(os.path.join(pose_path, x))[0].detach().cpu().numpy() for x in sorted(os.listdir(pose_path), key = lambda x: int(''.join(re.findall('[0-9]+', x))))]
 
     # stable pose.
     pose_stabled = gaussian_filter1d(np.array(pose_list), 1, axis = 0)
@@ -75,7 +75,7 @@ def get_pose_video(
     e4e_path = os.path.join(from_path, "cache.pt")
     gen_file_list, selected_id_image, selected_id_latent, selected_id = torch.load(e4e_path)
     if pose_path is None:
-        pose_path = os.path.join(from_path, "pose")
+        pose_path = os.path.join(from_path, "expressive")
     stabled_pose_latents = stable_pose(selected_id_image, selected_id_latent, pose_path)
     stabled_pose_latent_path = os.path.join(to_path, "pose_stabled")
     os.makedirs(stabled_pose_latent_path, exist_ok = True)
