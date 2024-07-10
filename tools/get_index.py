@@ -17,7 +17,6 @@ from DeepLog import logger
 
 from tqdm import tqdm
 
-
 def debug_tensor2image( 
                         tensor: torch.Tensor,
                         save_path: str
@@ -72,15 +71,19 @@ def get_scores(
     scores = [torch.zeros_like(latent) for latent in id_ss_latent]
 
     if list_path is not None:
-        with open(list_path, "rb") as f:
-            _list = pickle.load(f)
-            if len(_list[0]) > 2:
-                _list = [(x[0], x[1]) for x in _list]
+        if isinstance(list_path, str):
+            with open(list_path, "rb") as f:
+                _list = pickle.load(f)
+                if len(_list[0]) > 2:
+                    _list = [(x[0], x[1]) for x in _list]
+        else:
+            _list = list_path
     else:
         _list = []
-        for l, alpha in enumerate(alphas):
-            for c, _ in enumerate(alpha):
-                _list.append((l,c))
+        for l, alpha in enumerate(ALPHAS[5:8]):
+            (k, cs) = alpha
+            for c in cs:
+                _list.append((k, c))
 
     #part = ALPHAS[5:8]
     #for l, alpha in enumerate(alphas):
@@ -128,18 +131,14 @@ def get_index(
     id_ss_latent = ss_decoder.get_style_space(id_latent)
     with torch.no_grad():
         gt_image = ss_decoder(id_ss_latent)
+    deltas = get_alpha_deltas(100_000, ss_decoder)
     
     mask = gen_masks(id_landmarks, gt_image.detach().squeeze().cpu().permute(1,2,0).numpy())["chin"]
-    #_ , mask = get_mask_by_region()
-    #mask = cv2.resize(mask ,(1024, 1024))
-    #mask = torch.tensor(mask).to(device).unsqueeze(0)
-    #mask = mask.permute(0,3,1,2)
     #mask = (mask + mask_chin)
     #mask[mask > 0] = 1
 
-    deltas = get_alpha_deltas(100_000, ss_decoder)
 
-    scores = get_scores(
+    scores_region = get_scores(
                          id_ss_latent,
                          gt_image,
                          mask,
@@ -147,20 +146,41 @@ def get_index(
                          deltas,
                          list_path
                        )
-    
 
-    torch.save(scores, save_path)
-
-    scores = [[(l, c, y) for c, y in enumerate(x.detach().cpu().numpy().tolist()[0])] for l, x in enumerate(scores)]
-
+    scores = [[(l, c, y) for c, y in enumerate(x.detach().cpu().numpy().tolist()[0])] for l, x in enumerate(scores_region)]
     scores_new = []
     for score in scores:
         scores_new += score
+    #logger.info(sorted(scores_new, key = lambda x: x[2]))
+    sorted_scores = [x for x in scores_new if x[2] > 0.9e-3]
+    logger.info(sorted(sorted_scores, key = lambda x: x[2]))
+    sorted_scores = [(x[0], x[1]) for x in sorted(sorted_scores, key = lambda x: x[2])]
+    
+    _ , mask = get_mask_by_region()
+    mask = cv2.resize(mask ,(1024, 1024))
+    mask = torch.tensor(mask).to(device).unsqueeze(0)
+    mask = mask.permute(0,3,1,2)
 
-    sorted_scores = [x for x in scores_new if x[2] > 1e-4]
+    scores_fixed = get_scores(
+                         id_ss_latent,
+                         gt_image,
+                         mask,
+                         ss_decoder,
+                         deltas,
+                         sorted_scores
+                       )
+    
+    scores = [[(l, c, y) for c, y in enumerate(x.detach().cpu().numpy().tolist()[0])] for l, x in enumerate(scores_fixed)]
+    scores_new = []
+    for score in scores:
+        scores_new += score
+    #logger.info(sorted(scores_new, key = lambda x: x[2]))
+    sorted_scores = [x for x in scores_new if x[2] != 0] #if x[2] < 1e-4 and x[2] != 0]
+    logger.info(sorted(sorted_scores, key = lambda x: x[2] ,reverse = True))
 
-    logger.info(sorted_scores)
-
+    """
+    torch.save(scores, save_path)
+    """
 
 @click.command()
 @click.option("--cache_path", default = None)
@@ -190,11 +210,11 @@ def invoker(
         ss_decoder.load_state_dict(state_dict, False)
 
     get_index(
-                selected_id_latent,
-                face_info_from_id.landmarks,
-                ss_decoder,
-                save_path,
-                list_path
+              selected_id_latent,
+              face_info_from_id.landmarks,
+              ss_decoder,
+              save_path,
+              list_path
              )
 
 if __name__ == "__main__":

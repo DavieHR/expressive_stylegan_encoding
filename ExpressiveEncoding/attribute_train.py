@@ -55,6 +55,8 @@ def finetune_attribute(
     e4e_path = os.path.join(from_path, "cache.pt")
     pose_latent_path = os.path.join(from_path, "pose")
 
+    device = "cuda:0"
+
     os.makedirs(to_path, exist_ok = True)
     writer = None
     if DEBUG:
@@ -102,7 +104,7 @@ def finetune_attribute(
         assert gen_image is not None, "file not exits, please check."
         gen_image = cv2.cvtColor(gen_image, cv2.COLOR_BGR2RGB)
 
-        w_with_pose = torch.load(os.path.join(pose_latent_path, f"{ii + 1}.pt"))
+        w_with_pose = torch.load(os.path.join(pose_latent_path, f"{ii + 1}.pt")).to(device)
 
         face_info_from_gen = get_face_info(gen_image, detector)
         style_space_latent, images_tensor_last, gt_images_tensor_last, gammas, image_gen, facial_param = \

@@ -59,7 +59,8 @@ if VERBOSE or DEBUG:
 
 alpha_indexes = [
                  6, 11, 8, 14, 15, # represent Mouth
-                 5, 6, 8, # Chin/Jaw
+                 #5, 6, 8, # Chin/Jaw
+                 8, 11, 14, # Chin/Jaw
                  9, 11, 12, 14, 17, # Eyes
                  8, 9 , 11, # Eyebrows
                  9 # Gaze
@@ -71,9 +72,8 @@ alpha_S_indexes = [
                     [17, 387],
                     [12],
                     [45],
-                    [50, 505],
-                    [131],
-                    [390],
+                    #[50, 505],[131],[390],
+                    [122],[78],[43, 455],
                     [63],
                     [257],
                     [82, 414],
@@ -115,7 +115,7 @@ class face_parsing:
         img = self.to_tensor(image).unsqueeze(0).to("cuda:0")
         out = self.net(img)[0].detach().squeeze(0).cpu().numpy().argmax(0)
         mask = np.zeros_like(out)
-        for label in list(range(1,  7)) + list(range(10, 14)):
+        for label in list(range(1,  7)) + list(range(10, 16)):
             mask[out == label] = 1
         out = cv2.resize(np.float32(mask), (w,h))
         return out[..., np.newaxis]
@@ -300,17 +300,21 @@ def pose_optimization(
     h,w = ground_truth.shape[:2]
     if h != 1024:
         ground_truth = cv2.resize(ground_truth, (1024,1024))
-    mask_gt = face_parse(ground_truth)
+    #mask_gt = face_parse(ground_truth)
+    #erosion_size = 15
+    #element = cv2.getStructuringElement(cv2.MORPH_RECT, (2 * erosion_size + 1, 2 * erosion_size + 1), (erosion_size, erosion_size))
+    #mask_gt = cv2.erode(mask_gt, element)
+
+    #if mask_gt.ndim < 3:
+    #    mask_gt = mask_gt[..., np.newaxis]
 
     id_image = np.float32(id_image / 255.0)
     ground_truth = np.float32(ground_truth / 255.0)
 
-    """
     mask_gt = np.zeros((h,w,1))
     landmarks_gt = np.int32(res_gt.landmarks)
     points_gt = np.array([landmarks_gt[x[0],:] for x in points]).astype(np.int32)
     mask_gt = cv2.fillPoly(mask_gt, np.int32([points_gt]), (1,1,1))
-    """
 
     """
     # find top y
@@ -792,7 +796,7 @@ def pivot_finetuning(
     mask_to_paste, mask_boundary = get_mask_by_region()
     mask_to_paste_resize = cv2.resize(mask_to_paste, (resolution,resolution))
     mask = to_tensor(mask_to_paste_resize).to("cuda")
-    mask_boundary = to_tensor(mask_boundary).to("cuda")
+    mask_boundary = None #to_tensor(mask_boundary).to("cuda")
 
     #mask_dilate_to_paste_resize = cv2.resize(mask_dilate_to_paste, (resolution,resolution))
     #mask = to_tensor(mask_dilate_to_paste_resize).to("cuda")
@@ -806,13 +810,15 @@ def pivot_finetuning(
         for idx, (image, pivot) in enumerate(dataloader):
 
             pivot_random = None
-            if isinstance(pivot, list):
+            if not isinstance(pivot, list):
                 pivot, pivot_random = [x.to(device) for x in pivot[0]], [y.to(device) for y in pivot[1]]
                 #pivot[0] = ss_decoder.get_style_space(pivot[0].to(device))
                 #pivot = [(x.to(device), y.to(device)) for (x, y) in zip(pivot[0], pivot[1])]
             else:
                 pivot = [x.to(device) for x in pivot]
             image = image.to(device)  
+
+
             image_gen = ss_decoder(pivot)
 
             ret = loss_register(image, image_gen, mask_boundary, is_gradient = False)
@@ -858,31 +864,66 @@ def validate_video_gen(
                         latents: Union[str, List[np.ndarray]],
                         ss_decoder: Callable,
                         video_length: int,
-                        face_folder_path: str
+                        face_folder_path: str,
+                        attribute_path: str = None
                       ):
 
+    def update_region_offset(
+                              dlatents,
+                              offset,
+                              region_range
+                            ):
+        dlatents_tmp = [latent.clone() for latent in dlatents]
+        count = 0
+        #first 5 elements.
+        #forbidden_list = [
+        #                  ( 6, 378 ),
+        #                  ( 5, 50 ),
+        #                  ( 5, 505 )
+        #                 ]
+        #forbidden_list = []
+        #if tuple([k, i]) in forbidden_list:
+        #    logger.info(f"{k} {i} is forbidden.")
+        #    continue
+        for k, v in alphas[region_range[0]:region_range[1]]:
+            for i in v:
+                dlatents_tmp[k][:, i] = dlatents[k][:, i] + offset[:,count]
+                count += 1
+        return dlatents_tmp
     if video_length == -1:
         files = list(filter(lambda x: x.endswith('pt'), os.listdir(latent_folder)))
         assert len(files), "latent_folder has no latent file."
         video_length = len(files)
     if state_dict_path is not None:
-        ss_decoder.load_state_dict(torch.load(state_dict_path))
+        ss_decoder.load_state_dict(torch.load(state_dict_path), False)
     with imageio.get_writer(save_video_path, fps = 25) as writer:
         for index in tqdm(range(video_length)):
             if isinstance(latents, str):
-                style_space_latent = torch.load(os.path.join(latents, f"{index+1}.pt"))
-                style_space_latent = [s.to("cuda") for s in style_space_latent]
+                #style_space_latent = torch.load(os.path.join(latents, f"{index+1}.pt"))
+                style_space_latent = torch.load(os.path.join(latents, f"{1}.pt"))
+                if isinstance(style_space_latent, list):
+                    style_space_latent = [s.to("cuda") for s in style_space_latent]
             else:
                 style_space_latent = latents[index]
+
             if not isinstance(style_space_latent, list):
+                style_space_latent = style_space_latent.to("cuda:0")
                 style_space_latent = ss_decoder.get_style_space(style_space_latent)
+
+            if attribute_path is not None:
+                attribute = torch.load(os.path.join(attribute_path, f"{index + 1}.pt"))
+                if isinstance(attribute, list) and len(attribute) == 2:
+                    attribute = attribute[1]
+
+                attribute = torch.tensor(attribute).reshape(1, -1).to("cuda:0")
+                style_space_latent = update_region_offset(style_space_latent, attribute, [5, 8])
 
             image = np.uint8(np.clip(from_tensor(ss_decoder(style_space_latent) * 0.5 + 0.5), 0.0, 1.0) * 255.0)
             image_gt_path = os.path.join(face_folder_path, f'{index}.png')
             if not os.path.exists(image_gt_path):
                 image_gt_path = image_gt_path.replace('png', 'jpg')
             image_gt = cv2.imread(image_gt_path)[...,::-1]
-            image_gt = cv2.resize(image_gt, (1024,1024))
+            image_gt = cv2.resize(image_gt, (512,512))
             image_concat = np.concatenate((image, image_gt), axis = 0)
             writer.append_data(image_concat)
 
@@ -903,7 +944,6 @@ def expressive_encoding_pipeline(
     G = load_model(stylegan_path).synthesis
     for p in G.parameters():
         p.requires_grad = False
-
 
     pose_edit = PoseEdit()
     ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))

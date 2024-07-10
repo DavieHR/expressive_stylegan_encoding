@@ -8,7 +8,7 @@ mkdir -p results
 
 function main
 {
-  CUDA_VISIBLE_DEVICES=6 python -m ExpressiveEncoding.pose_train \
+  CUDA_VISIBLE_DEVICES=1 python -m ExpressiveEncoding.pose_train \
                          --training_path ./results/exp010/0/ \
                          --config_path ./scripts/${exp_name} \
                          --resume_path ./results/pose_finetuning_020/param \

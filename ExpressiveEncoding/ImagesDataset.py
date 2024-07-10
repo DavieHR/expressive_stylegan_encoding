@@ -87,7 +87,7 @@ class ImagesDataset(Dataset):
     def __len__(self):
         if DEBUG:
             return 1800
-        return min(len(self.source_paths), 1800)
+        return len(self.source_paths)
 
     def __getitem__(self, index):
         _, from_path = self.source_paths[index]

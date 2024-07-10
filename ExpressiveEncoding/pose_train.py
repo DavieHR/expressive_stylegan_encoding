@@ -58,10 +58,10 @@ def finetune_pose(
             lpips_loss = self.lpips_loss(x,y).mean()
             x = mask * x
             y = mask * y
-            l2_loss = self.l2_loss(x, y).mean()
+            l1_loss = self.l1_loss(x, y).mean()
     
             return {
-                     "l2_loss": l2_loss,
+                     "l1_loss": l1_loss,
                      "lpips_loss": lpips_loss
                    }
     
@@ -107,8 +107,12 @@ def finetune_pose(
         face_info_from_gen = get_face_info(gen_image, detector)
         logger.info("get face info.")
         if resume_path is not None:
-            param = torch.load(os.path.join(resume_path, f'{ii + 1}.pt'))
-            pose_param = param
+            if "expressive" in resume_path:
+                param = torch.load(os.path.join(resume_path, f'attribute_{ii + 1}.pt'))
+                pose_param = param[0]
+            else:
+                param = torch.load(os.path.join(resume_path, f'{ii + 1}.pt'))
+                pose_param = param
         else:
             pose_param = None
 
