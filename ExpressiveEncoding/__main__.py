@@ -1,5 +1,6 @@
 import click
 from .train import expressive_encoding_pipeline
+from .train_v3 import expressive_encoding_pipeline as expressive_encoding_pipeline_v3
 from .puppet import puppet, puppet_video
 
 @click.command()
@@ -13,6 +14,8 @@ def main(pipeline,
          save_path):
     if pipeline == 'train':
         expressive_encoding_pipeline(config_path, save_path, path)
+    if pipeline == 'train_v3':
+        expressive_encoding_pipeline_v3(config_path, save_path, path)
     elif pipeline == 'puppet':
         puppet(config_path, save_path, path)
     elif pipeline == 'puppet_video':
