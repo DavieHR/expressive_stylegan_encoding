@@ -7,7 +7,7 @@ config_path=sh_scripts/train
 save_path=/data1/chenlong/0517/video/0612/man3_test_100
 face_path=/data1/chenlong/0517/video/0612/smooth/100
 mode=PTI
-gpu_numbers=1
+gpu_numbers=4
 function main
 {
   CUDA_VISIBLE_DEVICES=0,1,2,3 python tools/train_pose_facial_multi_gpus.py \
