@@ -20,11 +20,15 @@ class LPIPS(nn.Module):
         super(LPIPS, self).__init__()
 
         # pretrained network
-        self.net = get_network(net_type).to("cuda")
+        self.net = get_network(net_type)
 
         # linear layers
-        self.lin = LinLayers(self.net.n_channels_list).to("cuda")
+        self.lin = LinLayers(self.net.n_channels_list)
         self.lin.load_state_dict(get_state_dict(net_type, version))
+
+    def set_device(self, device):
+        self.lin.to(device)
+        self.net.to(device)
 
     def forward(self, x: torch.Tensor, y: torch.Tensor, is_reduce = True):
         feat_x, feat_y = self.net(x), self.net(y)

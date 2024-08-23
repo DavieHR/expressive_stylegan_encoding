@@ -106,7 +106,7 @@ def get_euler_angle(res):
 
 if __name__ == "__main__":
     detector = get_detector()
-    debug = True
+    debug = False
     is_planar = False
     is_fast = True
     is_compensate = True
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     #path = "/data1/chenlong/0517/dingzhi/lehehe/data/20230805_115249921/20230805_115249921.mp4" 
     #path = "/data1/chenlong/0517/dingzhi/lehehe/data/20230805_115249921/20230805_115249921.mp4" 
     #path = "face1.mp4" 
-    path = "/data1/Dataset/chenlong/0206/video/kanghui/0.mp4"
+    path = "/data1/chenlong/online_model_set/speed/exp_speed_v3/release_v3/QjXSCiOY/templates/video.mp4"
 
     postfix = ".mp4"
 
@@ -136,7 +136,7 @@ if __name__ == "__main__":
 
     save_path = "output" + postfix
     START_FRAMES = 0 #3 * 25 if is_debug_stylegan_alignment else 0
-    FRAMES = 10 * 25 #10 * 25 if not debug else 4
+    FRAMES =  25 #10 * 25 if not debug else 4
     reader_init = imageio.get_reader(path) 
     meta_info = reader_init.get_meta_data()
     fps = meta_info["fps"]
@@ -235,8 +235,10 @@ if __name__ == "__main__":
                 #writer.append_data(aligned_by_stylegan)
                 #i += 1
                 #continue
-
+            
             image_copy = image.copy()
+            cv2.imwrite(f"images/{i}.jpg",  image_copy[...,::-1])
+            """
             res = face_infos[i]
             key_frames.append(dict(frame = image_copy, angle = get_euler_angle(res)))
             error = 0.0
@@ -258,10 +260,10 @@ if __name__ == "__main__":
                     break
                 logger.info(f"find a new key.")
                 j += 1
-
+            """
             #cv2.imwrite(f"warpedFrame_{i}_0.jpg",  key_frames[j]["frame"][...,::-1])
-            #cv2.imwrite(f"warpedFrame_{i}_1.jpg",  image_copy[...,::-1])
             #cv2.imwrite(f"warpedFrame_{i}_2.jpg",  image[...,::-1])
+            """
             logger.info(f"j is {j}")
             image = cv2.putText(image, f"affine_with_key_{j}th_{error:.5}", (51,51), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0))
             image_copy = cv2.putText(image_copy, "origin", (51,51), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0))
@@ -270,4 +272,5 @@ if __name__ == "__main__":
             if is_debug_mask:
                 writer_list.append(get_masked_image(image))
             writer.append_data(np.concatenate(tuple(writer_list), axis = 1))
+            """
             i += 1

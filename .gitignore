@@ -32,4 +32,9 @@ tests/puppet
 results
 error.txt
 
-
+# scripts
+scripts/exp*
+scripts/pivot*
+scripts/*expressive*
+scripts/pose*
+scripts/puppe*

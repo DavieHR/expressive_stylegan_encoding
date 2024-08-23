@@ -5,13 +5,14 @@ sys.path.insert(0, os.path.join(where_am_i, "stylegan3"))
 import torch
 import dnnlib
 import legacy
+import copy
 
 
 from training.networks_stylegan2 import SynthesisNetwork, SynthesisLayer, SynthesisBlock, \
                                         ToRGBLayer, misc, modulated_conv2d, \
                                         bias_act, upfirdn2d 
 
-def load_model(network_pkl, device = "cuda"):
+def load_model(network_pkl, device = "cpu"):
     if network_pkl.endswith("pkl"): 
         with dnnlib.util.open_url(network_pkl) as fp:
             G = legacy.load_network_pkl(fp)['G_ema'].requires_grad_(False).to(device) # type: ignore
@@ -161,7 +162,7 @@ class StyleSpaceDecoder(CopyLayer):
         if synthesis is not None:
             module = synthesis
         else:
-            _base_model = load_model(stylegan_path)
+            _base_model = copy.deepcopy(load_model(stylegan_path))
             module = _base_model.synthesis
         super().__init__(module)
         if synthesis is None:
@@ -172,8 +173,10 @@ class StyleSpaceDecoder(CopyLayer):
             block_forked = StyleSpaceSythesisBlock(block)
             setattr(self, f"b{res}", block_forked)
 
-    def _group_latent(self,
-                     ws):
+    def _group_latent(
+                      self,
+                      ws
+                     ):
         ws_group = []
         group_idx = 0
         for res in self.block_resolutions:
@@ -184,6 +187,9 @@ class StyleSpaceDecoder(CopyLayer):
         return ws_group
 
     def forward(self, ws, **block_kwargs):
+        if isinstance(ws, torch.Tensor):
+            ws = self.get_style_space(ws)
+
         if not isinstance(ws[0], list):
             ws = self._group_latent(ws)
         x = img = None
@@ -191,6 +197,30 @@ class StyleSpaceDecoder(CopyLayer):
             block = getattr(self, f'b{res}')
             x, img = block(x, img, cur_ws, **block_kwargs)
         return img
+
+    def get_conv_weight(self, i, l):
+        i_sum = 0
+        for res in self.block_resolutions:
+            block = getattr(self, f'b{res}')
+            if res==4: 
+                if i_sum == i:
+                    return block.conv1.weight[:, l, ...]
+                i_sum += 1
+                if i_sum == i:
+                    return block.torgb.weight[:, l, ...]
+                i_sum += 1
+            else:
+
+                if i_sum == i:
+                    return block.conv0.weight[:, l, ...]
+                i_sum += 1
+                if i_sum == i:
+                    return block.conv1.weight[:, l, ...]
+                i_sum += 1
+                if i_sum == i:
+                    return block.torgb.weight[:, l, ...]
+                i_sum += 1
+        raise RuntimeError(f"{i} not in list.")
 
     def get_style_space(self, ws):
         i=0

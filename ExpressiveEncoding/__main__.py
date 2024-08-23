@@ -7,12 +7,16 @@ from .puppet import puppet, puppet_video
 @click.option('--path', default = None)
 @click.option('--config_path')
 @click.option('--save_path')
-def main(pipeline,
+@click.option('--decoder_path', default = None)
+def main(
+         pipeline,
          path,
          config_path,
-         save_path):
+         save_path,
+         decoder_path
+        ):
     if pipeline == 'train':
-        expressive_encoding_pipeline(config_path, save_path, path)
+        expressive_encoding_pipeline(config_path, save_path, path, decoder_path)
     elif pipeline == 'puppet':
         puppet(config_path, save_path, path)
     elif pipeline == 'puppet_video':

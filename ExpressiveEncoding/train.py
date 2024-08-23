@@ -9,8 +9,11 @@ import yaml
 import imageio
 import pdb
 import re
+import shutil
 
 import numpy as np
+import torch.distributed as dist
+
 
 from tqdm import tqdm
 from easydict import EasyDict as edict
@@ -18,6 +21,12 @@ from DeepLog import logger, Timer
 from DeepLog.logger import logging
 from torchvision import transforms
 from PIL import Image
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torchvision import transforms
+from torchvision.utils import make_grid
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+
 current_dir = os.getcwd()
 
 from .pose_edit_with_flow import PoseEdit
@@ -25,12 +34,11 @@ from .decoder import StyleSpaceDecoder, load_model
 from .encoder import Encoder4EditingWrapper
 from .FaceToolsBox.alignment import get_detector, infer, \
                              get_euler_angle, get_landmarks_from_mediapipe_results, need_to_warp
+
 from .FaceToolsBox.crop_image import crop
-
+from .ImagesDataset import ImagesDataset, ImagesDatasetV2, ImagesDatasetV3, ImagesDatasetW
 from .loss import LossRegisterBase
-
 from .loss.FaceParsing.model import BiSeNet
-
 
 from .utils import to_tensor, from_tensor
 points = [(10, 338),(338, 297),(297, 332),
@@ -135,7 +143,6 @@ def get_mask_by_region():
         _mask_dilate[y2 - pad :y2, x1:x2, :] = 1
         _mask_dilate[y1:y2, x1 : x1 + pad, :] = 1
         _mask_dilate[y1:y2, x2 - pad : x2, :] = 1
-
 
     return _mask, _mask_dilate
 
@@ -245,7 +252,7 @@ def select_id_latent(
     path = paths["driving_face_path"]
     files = [os.path.join(path, x) for x in os.listdir(path)]
     files = sorted(files, key = lambda x: int(os.path.basename(x).split('.')[0]))
-
+    G.to("cuda")
     metric = IDLoss()
     _metric_value = torch.tensor([999.0], dtype = torch.float32).to("cuda")
     selected_id = 0
@@ -280,6 +287,7 @@ def select_id_latent(
            selected_id
 
 # Stage II: pose optimized 
+
 def pose_optimization(
                       latent_id: torch.Tensor,
                       id_image: np.ndarray,
@@ -296,10 +304,11 @@ def pose_optimization(
     
     if VERBOSE:
         t = Timer()
+    target_res = kwargs.get("target_res", 1024)
 
     h,w = ground_truth.shape[:2]
-    if h != 1024:
-        ground_truth = cv2.resize(ground_truth, (1024,1024))
+    if h != target_res:
+        ground_truth = cv2.resize(ground_truth, (target_res, target_res))
     #mask_gt = face_parse(ground_truth)
     #erosion_size = 15
     #element = cv2.getStructuringElement(cv2.MORPH_RECT, (2 * erosion_size + 1, 2 * erosion_size + 1), (erosion_size, erosion_size))
@@ -352,7 +361,7 @@ def pose_optimization(
 
     # add mask to paste
     mask_to_paste, _ = get_mask_by_region()
-    mask_to_paste_resize = cv2.resize(mask_to_paste, (1024,1024))
+    mask_to_paste_resize = cv2.resize(mask_to_paste, (target_res,target_res))
     mask_to_paste_resize_tensor = to_tensor(mask_to_paste_resize).to("cuda")
     
     mask_gt_region = mask_gt
@@ -360,27 +369,33 @@ def pose_optimization(
     #mask_gt_region = np.ones_like(mask_gt) #np.int32((mask_to_paste_resize + mask_gt) >= 1)
     #mask_gt_region = np.int32((mask_to_paste_resize + mask_gt) >= 1)
 
-    pad = 50
-    mask_facial = np.ones((1024,1024,1), dtype = np.float32)
-    pad_x = pad - 10
-    pad_mouth = pad - 20
-    mask_facial[310 + pad:556 - pad, 258 + pad_x: 484 - pad_x] = 0
-    mask_facial[310 + pad:558 - pad, 536 + pad_x: 764 - pad_x] = 0
-    mask_facial[620 + pad:908 - pad, 368 + pad_mouth: 656 - pad_mouth] = 0
+    scale = 1024 // target_res
+
+    pad = 50 // scale
+    mask_facial = np.ones((target_res,target_res,1), dtype = np.float32)
+    pad_x = pad - 10 // scale
+    pad_mouth = pad - 20 // scale
+    mask_facial[310 // scale + pad: 556// scale - pad, 258 // scale + pad_x: 484 // scale - pad_x] = 0
+    mask_facial[310 // scale + pad:558 // scale - pad, 536 // scale + pad_x: 764 // scale - pad_x] = 0
+    mask_facial[620 // scale + pad:908 // scale - pad, 368 // scale + pad_mouth: 656 // scale - pad_mouth] = 0
         
     mask_gt_tensor = to_tensor(mask_gt_region).to("cuda")
     mask_id_tensor = to_tensor(mask_id).to("cuda")
-
     mask_facial_tensor = to_tensor(mask_facial).to("cuda")
+
+    #mask_gt_tensor = 2 * (mask_gt_tensor - 0.5)
+    #mask_facial_tensor = 2 * (mask_facial_tensor - 0.5)
+
 
     gt_tensor = to_tensor(ground_truth).to("cuda")
     gt_tensor = 2 * (gt_tensor -  0.5)
+
     gt_tensor.requires_grad = False
     mask_gt_tensor.requires_grad = False
 
-    epochs = kwargs.get("epochs", 20)
-    yaw, pitch = res_id.yaw, res_id.pitch
+    epochs = kwargs.get("epochs", 10)
     with torch.no_grad():
+        yaw, pitch = res_id.yaw, res_id.pitch
         id_zflow = pose_edit(latent_id, yaw, pitch)
 
     resume_param = kwargs.get("resume_param", None)
@@ -389,14 +404,17 @@ def pose_optimization(
         pitch_to_optim = torch.tensor([0.0]).type(torch.FloatTensor).to("cuda")#torch.from_numpy(np.array([0.0])).type(torch.FloatTensor).to("cuda")
     else:
         yaw_to_optim, pitch_to_optim = resume_param
-        yaw_to_optim = yaw_to_optim.detach().reshape(1)
-        pitch_to_optim = pitch_to_optim.detach().reshape(1)
+        yaw_to_optim = yaw_to_optim.detach().reshape(1).to("cuda")
+        pitch_to_optim = pitch_to_optim.detach().reshape(1).to("cuda")
 
     yaw_to_optim.requires_grad = True
     pitch_to_optim.requires_grad = True
 
-    optim = torch.optim.Adam([yaw_to_optim, pitch_to_optim], lr = kwargs.get("lr", 1.0))
-    sche = torch.optim.lr_scheduler.StepLR(optim, step_size=50, gamma=0.5)
+    #optim = torch.optim.LBFGS([yaw_to_optim, pitch_to_optim], lr = kwargs.get("lr", 1.0), max_iter = 20)
+    optim = torch.optim.SGD([yaw_to_optim, pitch_to_optim], lr = kwargs.get("lr", 1.0))
+    #optim = torch.optim.Adam([yaw_to_optim, pitch_to_optim], lr = kwargs.get("lr", 1.0))
+
+    sche = torch.optim.lr_scheduler.StepLR(optim, step_size=20, gamma=0.5)
     if VERBOSE:
         t.tic("optimize pose")
 
@@ -410,32 +428,50 @@ def pose_optimization(
     threshold = kwargs.get("threshold", 0.02)
 
     for epoch in range(1, epochs + 1):
-        w = pose_edit(id_zflow, 
-                      yaw_to_optim,
-                      pitch_to_optim,
-                      True)
-        style_space = G.get_style_space(w)
-        gen_tensor = G(style_space)
-        #gen_tensor = torch.nn.functional.interpolate(gen_tensor, (256, 256))
-        optim.zero_grad()
-        ret = loss_register(gen_tensor * mask_gt_tensor,  gt_tensor * mask_gt_tensor, mask_facial_tensor, is_gradient = False)
-        #ret = loss_register(gen_tensor,  gt_tensor, is_gradient = False)
-        if ret['loss'].item() < threshold:
-            logger.info(f"less {threshold}, stop training....")
-            break
+        def closure():
+            optim.zero_grad()
+            w = pose_edit(id_zflow, 
+                          yaw_to_optim,
+                          pitch_to_optim,
+                          True)
+            style_space = G.get_style_space(w)
+            gen_tensor = G(style_space)
+            #gen_tensor = torch.nn.functional.interpolate(gen_tensor, (256, 256))
+            ret = loss_register(gen_tensor * mask_gt_tensor,  gt_tensor * mask_gt_tensor, mask_facial_tensor, is_gradient = False)
+            #ret = loss_register(gen_tensor,  gt_tensor, is_gradient = False)
 
-        ret['loss'].backward(retain_graph = True)
+            ret['loss'].backward(retain_graph = True)
+            return ret["loss"]
+        
+
+        #if ret['loss'].item() < threshold:
+        #    logger.info(f"less {threshold}, stop training....")
+        #    break
+        optim.step(closure)
+        sche.step()
 
         if writer is not None and DEBUG:
+            w = pose_edit(id_zflow, 
+                          yaw_to_optim,
+                          pitch_to_optim,
+                          True)
+            style_space = G.get_style_space(w)
+            gen_tensor = G(style_space)
+            #with torch.no_grad():
+            ret = loss_register(gen_tensor * mask_gt_tensor,  gt_tensor * mask_gt_tensor, mask_facial_tensor, is_gradient = False)
             writer.add_scalars(f'pose_estimate/scalar', ret, global_step = epoch)
             writer.add_scalars(f'pose_estimate/pose', dict(yaw = yaw_to_optim, pitch = pitch_to_optim), global_step = epoch)
             #images_in_training = torch.cat(((1 - mask_to_paste_resize_tensor) * gt_tensor + gen_tensor * mask_to_paste_resize_tensor), dim = 2)
-            images_in_training = torch.cat(((1 - mask_gt_tensor) * gt_tensor + gen_tensor * mask_gt_tensor, mask_gt_tensor * gen_tensor, mask_gt_tensor * gt_tensor, mask_facial_tensor * gen_tensor), dim =2)
-            writer.add_image(f'pose_estimate/image', make_grid(images_in_training.detach(),normalize=True, scale_each=True), epoch)
-        optim.step()
-        sche.step()
+            images_in_training = torch.cat(((1 - mask_gt_tensor) * gt_tensor + gen_tensor * mask_gt_tensor, mask_facial_tensor * mask_gt_tensor * gen_tensor, mask_facial_tensor * mask_gt_tensor * gt_tensor), dim =2)
+            writer.add_image(f'pose_estimate/image', make_grid(images_in_training.detach(),normalize = True, scale_each=True), epoch)
     if VERBOSE:
         t.toc("optimize pose")
+    w = pose_edit(id_zflow, 
+                  yaw_to_optim,
+                  pitch_to_optim,
+                  True)
+    style_space = G.get_style_space(w)
+    gen_tensor = G(style_space)
     # reset pose edit latent 
     # to avoid the gradient accumulation.
     pose_edit.reset()
@@ -705,40 +741,66 @@ def pivot_finetuning(
                      config: edict,
                      **kwargs
                     ):
-    from torchvision import transforms
-    from torchvision.utils import make_grid
-    from torch.utils.data import DataLoader
-    from .ImagesDataset import ImagesDataset, ImagesDatasetV2, ImagesDatasetV3
 
     resolution = kwargs.get("resolution", 1024)
     batchsize = kwargs.get("batchsize", 1)
     lr = kwargs.get("lr", 3e-4)
     resume_path = kwargs.get("resume_path", None)
+    rank = kwargs.get("rank", -1)
+    world_size = kwargs.get("world_size", 0)
+    device = "cuda:0"
+    if rank != -1:
+        device = rank
+        dist.init_process_group("nccl", rank=rank, world_size=world_size) 
+        torch.cuda.set_device(rank)
 
     expressive_path = config.expressive_path if hasattr(config, "expressive_path") else None
     ss_path = config.ss_path if hasattr(config, "ss_path") else None
+    space_finetuning = config.space_finetuning if hasattr(config, "space_finetuning") else "style_space"
 
     def get_dataloader(
                       ):
+    
+        if space_finetuning == "style_space":
 
-        if expressive_path is None:
-            dataset = ImagesDataset(path_images, path_style_latents, transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-                transforms.Resize(size = (resolution, resolution))]))
+            if expressive_path is None:
+                dataset = ImagesDataset(path_images, path_style_latents, transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+                    transforms.Resize(size = (resolution, resolution))]))
+            else:
+                dataset = ImagesDatasetV2(path_images, path_style_latents, expressive_path, transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+                    transforms.Resize(size = (resolution, resolution))]))
+        elif space_finetuning == "w_space":
+                dataset = ImagesDatasetW(path_images, path_style_latents, transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+                    transforms.Resize(size = (resolution, resolution))]))
+
         else:
-            dataset = ImagesDatasetV2(path_images, path_style_latents, expressive_path, ss_path, transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-                transforms.Resize(size = (resolution, resolution))]))
+            raise RuntimeError(f"{space_finetuning} not expected type.")
 
-        return DataLoader(dataset, batch_size = batchsize, shuffle = False, num_workers = 8)
-
-    class LossRegister(LossRegisterBase):
+        if rank != -1:
+            return DataLoader(
+                              dataset, batch_size = batchsize, \
+                              num_workers = batchsize,  \
+                              #num_workers = 1,  \
+                              sampler = DistributedSampler(dataset, shuffle = False, rank = rank, num_replicas = world_size), \
+                              pin_memory=True
+                             )
+        else:
+            return DataLoader(dataset, batch_size = batchsize, shuffle = False, \
+                              num_workers = 8
+                             )
+    
+    class PivotLossRegister(LossRegisterBase):
+        
         def forward(self, 
                     x,
                     y,
-                    mask,
+                    mask = None,
                     y_random =None
                    ):
             l2 = self.l2(x,y).mean() * self.l2_weight
@@ -746,38 +808,39 @@ def pivot_finetuning(
         
             #if y_random is not None:
             if mask is not None:
-                x = x * mask #(1 - mask)
-                y = y * mask #(1 - mask)
-                l2_with_mask = self.l2_mask(x, y).mean() * self.l2_mask_weight
-                lpips_with_mask = self.lpips_mask(x, y).mean() * self.lpips_mask_weight
-
+                #x = x * (1 - mask)
+                #y = y * (1 - mask)
+                l2_with_mask = self.l2(x, y).mean() * self.l2_mask_weight
+                lpips_with_mask = self.lpips(x, y).mean() * self.lpips_mask_weight
+    
+                return {
+                        "l2": l2,
+                        "lpips": lpips,
+                        "l2_with_mask": l2_with_mask,
+                        "lpips_with_mask": lpips_with_mask
+                       }
             return {
                     "l2": l2,
-                    "lpips": lpips,
-                    #"l2_with_mask": l2_with_mask,
-                    #"lpips_with_mask": lpips_with_mask
+                    "lpips": lpips
                    }
 
-    loss_register = LossRegister(config) 
+    loss_register = PivotLossRegister(config) 
 
+    loss_register.lpips.set_device(device)
     dataloader = get_dataloader()
 
     for p in ss_decoder.parameters():
         p.requires_grad = True
-    device = "cuda:0"
+    
     #parameters = []
     #for k, v in ss_decoder.named_parameters():
     #    if "affine" in k:
     #        logger.info(f"{k} add into optimization list.")
     #        v.requires_grad = True
     #        parameters.append(dict(params = v, lr = lr))
-
     ss_decoder.to(device)
     optim = torch.optim.Adam(ss_decoder.parameters(), lr = lr)
-    #optim = torch.optim.Adam(parameters, lr = lr)
-    total_idx = 0
-    epochs = kwargs.get("epochs", 100)
-    writer = kwargs.get("writer", None)
+
     lastest_model_path = None
     start_idx = 1
     if resume_path is not None:
@@ -788,6 +851,18 @@ def pivot_finetuning(
         start_idx = epoch_from_resume + 1
         total_idx = epoch_from_resume * len(dataloader)
 
+    if rank != -1:
+        ss_decoder = DDP(ss_decoder, device_ids = [rank], find_unused_parameters=True)
+
+    #optim = torch.optim.Adam(parameters, lr = lr)
+    total_idx = 0
+    epochs = kwargs.get("epochs", 100)
+    tensorboard = kwargs.get("tensorboard", None)
+    writer = None
+    if tensorboard is not None and (rank == 0 or rank == -1):
+        from tensorboardX import SummaryWriter
+        writer = SummaryWriter(tensorboard)
+
     save_interval = kwargs.get("save_interval", 100)
     epoch_pbar = tqdm(range(start_idx, epochs + 1))
 
@@ -795,45 +870,51 @@ def pivot_finetuning(
     #mask = mask.to(device)
     mask_to_paste, mask_boundary = get_mask_by_region()
     mask_to_paste_resize = cv2.resize(mask_to_paste, (resolution,resolution))
-    mask = to_tensor(mask_to_paste_resize).to("cuda")
-    mask_boundary = None #to_tensor(mask_boundary).to("cuda")
+    mask = to_tensor(mask_to_paste_resize).to(device)
+    mask_boundary = to_tensor(mask_boundary).to(device)
 
     #mask_dilate_to_paste_resize = cv2.resize(mask_dilate_to_paste, (resolution,resolution))
     #mask = to_tensor(mask_dilate_to_paste_resize).to("cuda")
 
     min_loss = 0xffff # max value.
     internal_size = 100 if not DEBUG else 100
-
+    torch.autograd.set_detect_anomaly = True
     for epoch in epoch_pbar:
+        if rank == 0 or rank == -1:
+            epoch_pbar.update(1)
         sample_loss = 0
         sample_count = 0
         for idx, (image, pivot) in enumerate(dataloader):
-
+        
+            b,c,h,w = image.shape
             pivot_random = None
-            if not isinstance(pivot, list):
-                pivot, pivot_random = [x.to(device) for x in pivot[0]], [y.to(device) for y in pivot[1]]
+            if expressive_path is not None:
+                pivot = [x.reshape(b * 2, -1).to(device) for x in pivot]
+                image = image.to(device)  
+                mask = image[:, 3:, ...]
+                image = image[:, :3, ...]
+                image_gen = ss_decoder(pivot)
+                image_gen[:b, ...] = image_gen[:b, ...] * mask * 10.0
+                image_gen[b:, ...] = image_gen[b:, ...] * (1.0 - mask)
+                image = torch.cat((image * mask * 10.0, image.clone() * (1.0 - mask)), dim = 0) 
+
                 #pivot[0] = ss_decoder.get_style_space(pivot[0].to(device))
                 #pivot = [(x.to(device), y.to(device)) for (x, y) in zip(pivot[0], pivot[1])]
             else:
-                pivot = [x.to(device) for x in pivot]
-            image = image.to(device)  
+                if space_finetuning == "w_space":
+                    pivot = pivot.to(device)
+                elif space_finetuning == "style_space":
+                    pivot = [x.to(device) for x in pivot]
+                image = image.to(device)  
+                image_gen = ss_decoder(pivot)
 
-
-            image_gen = ss_decoder(pivot)
-
-            ret = loss_register(image, image_gen, mask_boundary, is_gradient = False)
-            if pivot_random is None:
-                ret = loss_register(image, image_gen, mask_boundary, is_gradient = False)
-            else:
-                image_random = ss_decoder(pivot_random)
-                ret = loss_register(image, image_gen, mask_boundary, image_random, is_gradient = False)
+            ret = loss_register(image, image_gen, is_gradient = False)
             loss = ret['loss']
             optim.zero_grad()
-            b = image_gen.shape[0]
             loss.backward()
             optim.step()
-            total_idx += 1
-            if idx % internal_size == 0:
+            total_idx += 0
+            if idx % internal_size == 0 and (rank == 0 or rank == -1):
                 sample_loss += loss.mean()
                 sample_count += 1
                 string_to_info = reduce(lambda x, y: x + ', ' + y , [f'{k} {v.mean().item()}' for k, v in ret.items()])
@@ -841,21 +922,26 @@ def pivot_finetuning(
 
                 #if idx == 0 and writer is not None:
                 if writer is not None:
-                    image_to_show = torch.cat((image_gen, image, mask * image_gen + (1 - mask) * image),dim = 2)
-                    if pivot_random is not None:
-                        image_to_show = torch.cat((image_to_show, mask * image_random + (1 - mask) * image, image_random * mask_boundary), dim = 2)
+                    image_to_show = torch.cat((image_gen, image),dim = 2)
+                    #if pivot_random is not None:
+                    #    image_to_show = torch.cat((image_to_show, mask * image_random + (1 - mask) * image, image_random * mask_boundary), dim = 2)
 
                     writer.add_image(f'image', make_grid(image_to_show.detach(),normalize=True, scale_each=True), total_idx)
-                if writer is not None:
                     writer.add_scalars('loss', ret, total_idx)
+
         if sample_count == 0:
             sample_count += 1
         sample_loss /= sample_count
-        if sample_loss < min_loss:
+        if sample_loss < min_loss and (rank == 0 or rank == -1):
             lastest_model_path = os.path.join(path_snapshots, f"{epoch}.pth")
-            torch.save(ss_decoder.state_dict(), os.path.join(path_snapshots, f"{epoch}.pth"))
+            torch.save(ss_decoder.state_dict() if rank == -1 else ss_decoder.module.state_dict(), lastest_model_path)
             min_loss = sample_loss
             logger.info(f"min_loss: {min_loss}, epoch {epoch}")
+    if rank == 0 or rank == -1:
+        import shutil
+        shutil.copyfile(lastest_model_path, os.path.join(os.path.dirname(lastest_model_path), "best.pth"))
+        logger.info(f"training finished; the lastet snapshot saved in {lastest_model_path}")
+        
     return lastest_model_path
 
 def validate_video_gen(
@@ -891,7 +977,7 @@ def validate_video_gen(
                 count += 1
         return dlatents_tmp
     if video_length == -1:
-        files = list(filter(lambda x: x.endswith('pt'), os.listdir(latent_folder)))
+        files = list(filter(lambda x: x.endswith('png') or x.endswith("jpg"), os.listdir(face_folder_path)))
         assert len(files), "latent_folder has no latent file."
         video_length = len(files)
     if state_dict_path is not None:
@@ -899,8 +985,8 @@ def validate_video_gen(
     with imageio.get_writer(save_video_path, fps = 25) as writer:
         for index in tqdm(range(video_length)):
             if isinstance(latents, str):
-                #style_space_latent = torch.load(os.path.join(latents, f"{index+1}.pt"))
-                style_space_latent = torch.load(os.path.join(latents, f"{1}.pt"))
+                style_space_latent = torch.load(os.path.join(latents, f"{index+1}.pt"))
+                #style_space_latent = torch.load(os.path.join(latents, f"{1}.pt"))
                 if isinstance(style_space_latent, list):
                     style_space_latent = [s.to("cuda") for s in style_space_latent]
             else:
@@ -924,6 +1010,7 @@ def validate_video_gen(
                 image_gt_path = image_gt_path.replace('png', 'jpg')
             image_gt = cv2.imread(image_gt_path)[...,::-1]
             image_gt = cv2.resize(image_gt, (512,512))
+            image = cv2.resize(image, (512,512))
             image_concat = np.concatenate((image, image_gt), axis = 0)
             writer.append_data(image_concat)
 
@@ -936,7 +1023,8 @@ def validate_video_gen(
 def expressive_encoding_pipeline(
                                  config_path: str,
                                  save_path: str,
-                                 path: str = None
+                                 path: str = None,
+                                 decoder_path: str = None
                                 ):
 
     #TODO: log generator.
@@ -946,9 +1034,21 @@ def expressive_encoding_pipeline(
         p.requires_grad = False
 
     pose_edit = PoseEdit()
-    ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))
+    if decoder_path is not None:
+        ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G), to_resolution = 512)
+        target_res = 512
+    else:
+        ss_decoder = StyleSpaceDecoder(synthesis = deepcopy(G))
+        target_res = 1024
+
+    if decoder_path is not None:
+        ss_decoder.load_state_dict(torch.load(decoder_path), False)
+        logger.info("decoder loading ....")
+
     for p in ss_decoder.parameters():
         p.requires_grad = False
+
+    ss_decoder.to("cuda")
 
     with open(os.path.join(config_path, "config.yaml")) as f:
         basis_config = edict(yaml.load(f, Loader = yaml.CLoader))
@@ -1001,7 +1101,7 @@ def expressive_encoding_pipeline(
         gen_file_list, selected_id_image, selected_id_latent, selected_id = torch.load(cache_path)
     else:
         gen_file_list, selected_id_image, selected_id_latent, selected_id = select_id_latent(files_path,
-                                                                                             G,
+                                                                                             ss_decoder,
                                                                                              stage_one_path
                                                                                             )
         torch.save(
@@ -1076,6 +1176,10 @@ def expressive_encoding_pipeline(
     pose_loss_register = PoseLossRegister(config_pose)
     facial_loss_register = FacialLossRegister(config_facial)
 
+    pose_loss_register.lpips_loss.set_device("cuda")
+    facial_loss_register.lpips.set_device("cuda")
+
+
     gammas = None
     images_tensor_last = None
     gt_images_tensor_last = None
@@ -1121,15 +1225,18 @@ def expressive_encoding_pipeline(
 
         #stage 2.
         w_with_pose, image_posed, pose_param = pose_optimization(
-                           selected_id_latent.detach(),
-                           np.uint8(selected_id_image),
-                           gen_image,
-                           face_info_from_gen,
-                           face_info_from_id,
-                           ss_decoder,
-                           pose_edit,
-                           pose_loss_register
-                         )
+                                                                 selected_id_latent.detach(),
+                                                                 np.uint8(selected_id_image),
+                                                                 gen_image,
+                                                                 face_info_from_gen,
+                                                                 face_info_from_id,
+                                                                 ss_decoder.to("cuda"),
+                                                                 pose_edit,
+                                                                 pose_loss_register,
+                                                                 epoch = 10,
+                                                                 lr = 1000,
+                                                                 target_res = target_res
+                                                                )
         torch.save(w_with_pose, os.path.join(stage_two_path, f"{ii+1}.pt"))       
         if DEBUG:
             image_posed = cv2.cvtColor(image_posed, cv2.COLOR_RGB2BGR)
@@ -1183,7 +1290,10 @@ def expressive_encoding_pipeline(
                                                ss_decoder, \
                                                config_pti, \
                                                writer = writer, \
-                                               resume_path = resume_path
+                                               resume_path = resume_path,\
+                                               resolution = target_res, \
+                                               epochs = 10,
+                                               batchsize = 8
                                               )
     logger.info(f"latest model path is {latest_decoder_path}")
     #latest_decoder_path = './results/pivot_001/snapshots/100.pth'

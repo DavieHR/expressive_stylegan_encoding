@@ -118,7 +118,7 @@ def puppet(
             w_plus_with_pose = pose_edit(zflow, yaw, pitch, True)
 
         style_space_latent = ss_decoder.get_style_space(w_plus_with_pose)
-        style_space_latent = attribute_mixing(style_space_latent, driving_style_latent)
+        #style_space_latent = attribute_mixing(style_space_latent, driving_style_latent)
         style_space_with_attr = update_alpha(style_space_latent, attr_latents[1])
         torch.save(style_space_with_attr, os.path.join(latent_path, f'{index + 1}.pt'))
     latent_to_train_path = os.path.join(save_path, "latent_to_training")
@@ -153,7 +153,7 @@ def puppet(
                         latest_decoder_path,
                         latent_path,
                         ss_decoder,
-                        -1,
+                        100,
                         face_folder_path
                       )
     logger.info(f"validate video located in {validate_video_path}")
