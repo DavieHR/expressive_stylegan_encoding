@@ -29,9 +29,10 @@ class Encoder4EditingWrapper:
     """
     def __init__(
                   self,
-                  checkpoint_path
+                  checkpoint_path,
+                  device='cuda:0'
                 ):
-        self.net, _ = get_e4e_model(checkpoint_path)
+        self.net, _ = get_e4e_model(checkpoint_path,device)
 
     def __call__(
                  self,
