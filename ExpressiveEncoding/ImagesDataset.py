@@ -87,7 +87,8 @@ class ImagesDataset(Dataset):
     def __len__(self):
         if DEBUG:
             return 1800
-        return min(len(self.source_paths), 1800)
+        # return min(len(self.source_paths), 1800)
+        return len(self.source_paths)
 
     def __getitem__(self, index):
         _, from_path = self.source_paths[index]
@@ -163,3 +164,31 @@ class ImagesDatasetV3(ImagesDatasetV2):
         ss_latent = [x[0] for x in ss_latent]
         latent_residual = update_region_offset_v2(ss_latent, attribute, [0, len(alphas)]) 
         return from_im, [latent[0], latent_residual]
+
+
+class ImagesDataset_W(Dataset):
+    """ImagesDataset for pivot tuning.
+    """
+    def __init__(self,
+                 source_root,
+                 latent_root,
+                 source_transform=None):
+        self.source_paths = sorted(make_dataset(source_root), \
+                            key = lambda x: int(os.path.basename(x[1]).split('.')[0]))
+        self.latent_root = latent_root
+        self.source_transform = source_transform
+
+    def __len__(self):
+        if DEBUG:
+            return 100
+        # return min(len(self.source_paths), 3000)
+        return len(self.source_paths)
+
+    def __getitem__(self, index):
+        _, from_path = self.source_paths[index]
+        from_im = Image.open(from_path).convert('RGB')
+        if self.source_transform:
+            from_im = self.source_transform(from_im)
+        latent = torch.load(os.path.join(self.latent_root, f'{index + 1}.pt'))
+        return from_im, latent
+

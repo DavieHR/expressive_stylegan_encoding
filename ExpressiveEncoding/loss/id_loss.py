@@ -5,14 +5,14 @@ from .id_model.model_irse import Backbone
 where_am_i = os.path.dirname(os.path.realpath(__file__)).replace("loss", "")
 
 class IDLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, device='cuda:0'):
         super(IDLoss, self).__init__()
         self.facenet = Backbone(input_size=112, num_layers=50, drop_ratio=0.6, mode='ir_se')
-        self.facenet.load_state_dict(torch.load(os.path.join(where_am_i, "third_party/models/model_ir_se50.pth")))
+        self.facenet.load_state_dict(torch.load(os.path.join(where_am_i, "third_party/models/model_ir_se50.pth"),map_location= device))
         self.pool = torch.nn.AdaptiveAvgPool2d((256, 256))
         self.face_pool = torch.nn.AdaptiveAvgPool2d((112, 112))
         self.facenet.eval()
-        self.facenet.to("cuda:0")
+        self.facenet.to(device)
         for module in [self.facenet, self.face_pool]:
             for param in module.parameters():
                 param.requires_grad = False

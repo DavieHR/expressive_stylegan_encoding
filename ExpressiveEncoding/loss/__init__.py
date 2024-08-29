@@ -8,13 +8,14 @@ from .id_loss import IDLoss
 class LossRegisterBase:
     def __init__(
                  self,
-                 configure: edict
+                 configure: edict,
+                 device='cuda:0'
                 ):
 
         assert isinstance(configure, edict), f"configure expected type is EasyDict, but {type(configure)}"
         assert hasattr(configure, "losses"), "losses attribute not exists in this configure."
         assert isinstance(configure.losses, list), "attribute 'losses' expected type is list."
-    
+
         #TODO: pretty print configure.
 
         for _loss in configure.losses:
@@ -22,10 +23,17 @@ class LossRegisterBase:
             _this_loss_config = dict()
             if hasattr(_loss, "config"):
                 _this_loss_config = _loss.config
-            
+
             loss_instantiate = eval(_loss.name)(**_this_loss_config)
             setattr(self, loss_alias, loss_instantiate)
             setattr(self, loss_alias + "_weight", _loss.weights)
+
+            if loss_alias == 'lpips_loss':
+                self.lpips_loss.to(device)
+
+            if loss_alias == 'lpips':
+                self.lpips.to(device)
+
 
 
     def forward(
