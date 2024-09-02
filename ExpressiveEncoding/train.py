@@ -41,6 +41,7 @@ from .loss import LossRegisterBase
 from .loss.FaceParsing.model import BiSeNet
 
 from .utils import to_tensor, from_tensor
+
 points = [(10, 338),(338, 297),(297, 332),
           (332, 284),(284, 251),(251, 389),
           (389, 356),(356, 454),(454, 323),
@@ -130,7 +131,7 @@ class face_parsing:
 
 # instance face parse
 
-face_parse = face_parsing()
+#face_parse = face_parsing()
 
 def get_mask_by_region():
     _mask  = np.zeros((512,512,3), np.float32)
@@ -287,7 +288,6 @@ def select_id_latent(
            selected_id
 
 # Stage II: pose optimized 
-
 def pose_optimization(
                       latent_id: torch.Tensor,
                       id_image: np.ndarray,
@@ -325,34 +325,6 @@ def pose_optimization(
     points_gt = np.array([landmarks_gt[x[0],:] for x in points]).astype(np.int32)
     mask_gt = cv2.fillPoly(mask_gt, np.int32([points_gt]), (1,1,1))
 
-    """
-    # find top y
-    h, w = mask_gt.shape[:2]
-
-    top_y = 0
-    for i in range(h):
-        if mask_gt[i, :].sum() > 0:
-            top_y = i
-            break
-
-    left_x = 0
-    # find left x
-    for i in range(w):
-        if mask_gt[:, i].sum() > 0:
-            left_x = i
-            break
-
-    # find right x
-    right_x = 0
-    for i in range(w):
-        if mask_gt[:, -i].sum() > 0:
-            right_x = -i
-            break
-
-    pad_top = 100
-    pad_down = 200
-    mask_gt[top_y - pad_top: top_y + pad_down, left_x: right_x] = 1
-    """
 
     mask_id = np.zeros((h,w,1))
     landmarks_id = np.int32(res_id.landmarks)
@@ -758,6 +730,8 @@ def pivot_finetuning(
     ss_path = config.ss_path if hasattr(config, "ss_path") else None
     space_finetuning = config.space_finetuning if hasattr(config, "space_finetuning") else "style_space"
 
+    kmeans_info = config.kmeans_info if hasattr(config, "kmeans_info") else None
+
     def get_dataloader(
                       ):
     
@@ -767,7 +741,9 @@ def pivot_finetuning(
                 dataset = ImagesDataset(path_images, path_style_latents, transforms.Compose([
                     transforms.ToTensor(),
                     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-                    transforms.Resize(size = (resolution, resolution))]))
+                    transforms.Resize(size = (resolution, resolution))]),
+                    kmeans_info = kmeans_info
+                    )
             else:
                 dataset = ImagesDatasetV2(path_images, path_style_latents, expressive_path, transforms.Compose([
                     transforms.ToTensor(),
@@ -778,21 +754,21 @@ def pivot_finetuning(
                     transforms.ToTensor(),
                     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
                     transforms.Resize(size = (resolution, resolution))]))
-
         else:
             raise RuntimeError(f"{space_finetuning} not expected type.")
 
         if rank != -1:
+            batch_size = batchsize // world_size
             return DataLoader(
-                              dataset, batch_size = batchsize, \
-                              num_workers = batchsize,  \
+                              dataset, batch_size = batch_size, \
+                              num_workers = min(batchsize, 8),  \
                               #num_workers = 1,  \
-                              sampler = DistributedSampler(dataset, shuffle = False, rank = rank, num_replicas = world_size), \
+                              sampler = DistributedSampler(dataset, shuffle = False, rank = rank, num_replicas = world_size, drop_last = True), \
                               pin_memory=True
                              )
         else:
             return DataLoader(dataset, batch_size = batchsize, shuffle = False, \
-                              num_workers = 8
+                              num_workers = min(batchsize, 8), drop_last = True
                              )
     
     class PivotLossRegister(LossRegisterBase):
@@ -877,10 +853,10 @@ def pivot_finetuning(
     #mask = to_tensor(mask_dilate_to_paste_resize).to("cuda")
 
     min_loss = 0xffff # max value.
-    internal_size = 100 if not DEBUG else 100
-    torch.autograd.set_detect_anomaly = True
+    internal_size =  len(dataloader) // 5
     for epoch in epoch_pbar:
         if rank == 0 or rank == -1:
+            logger.info(f"internal_size is {internal_size}.")
             epoch_pbar.update(1)
         sample_loss = 0
         sample_count = 0
@@ -897,9 +873,6 @@ def pivot_finetuning(
                 image_gen[:b, ...] = image_gen[:b, ...] * mask * 10.0
                 image_gen[b:, ...] = image_gen[b:, ...] * (1.0 - mask)
                 image = torch.cat((image * mask * 10.0, image.clone() * (1.0 - mask)), dim = 0) 
-
-                #pivot[0] = ss_decoder.get_style_space(pivot[0].to(device))
-                #pivot = [(x.to(device), y.to(device)) for (x, y) in zip(pivot[0], pivot[1])]
             else:
                 if space_finetuning == "w_space":
                     pivot = pivot.to(device)
@@ -913,34 +886,31 @@ def pivot_finetuning(
             optim.zero_grad()
             loss.backward()
             optim.step()
-            total_idx += 0
+            total_idx += 1
             if idx % internal_size == 0 and (rank == 0 or rank == -1):
                 sample_loss += loss.mean()
                 sample_count += 1
                 string_to_info = reduce(lambda x, y: x + ', ' + y , [f'{k} {v.mean().item()}' for k, v in ret.items()])
                 logger.info(f"{idx+1}/{epoch}/{epochs}: {string_to_info}")
 
-                #if idx == 0 and writer is not None:
                 if writer is not None:
                     image_to_show = torch.cat((image_gen, image),dim = 2)
-                    #if pivot_random is not None:
-                    #    image_to_show = torch.cat((image_to_show, mask * image_random + (1 - mask) * image, image_random * mask_boundary), dim = 2)
-
-                    writer.add_image(f'image', make_grid(image_to_show.detach(),normalize=True, scale_each=True), total_idx)
+                    writer.add_image('image', make_grid(image_to_show.detach(),normalize=True, scale_each=True), total_idx)
                     writer.add_scalars('loss', ret, total_idx)
 
-        if sample_count == 0:
-            sample_count += 1
-        sample_loss /= sample_count
-        if sample_loss < min_loss and (rank == 0 or rank == -1):
-            lastest_model_path = os.path.join(path_snapshots, f"{epoch}.pth")
-            torch.save(ss_decoder.state_dict() if rank == -1 else ss_decoder.module.state_dict(), lastest_model_path)
-            min_loss = sample_loss
-            logger.info(f"min_loss: {min_loss}, epoch {epoch}")
+        if (rank == 0 or rank == -1):
+            sample_loss /= sample_count
+            if sample_loss < min_loss:
+                lastest_model_path = os.path.join(path_snapshots, f"{epoch}.pth")
+                torch.save(ss_decoder.state_dict() if rank == -1 else ss_decoder.module.state_dict(), lastest_model_path)
+                min_loss = sample_loss
+                logger.info(f"min_loss: {min_loss}, epoch {epoch}")
+
     if rank == 0 or rank == -1:
         import shutil
         shutil.copyfile(lastest_model_path, os.path.join(os.path.dirname(lastest_model_path), "best.pth"))
         logger.info(f"training finished; the lastet snapshot saved in {lastest_model_path}")
+        writer.close()
         
     return lastest_model_path
 
@@ -1092,7 +1062,6 @@ def expressive_encoding_pipeline(
     detector = get_detector()
 
     # stage 1.
-
     files_path = {
                     "driving_face_path": face_folder_path
                  }
@@ -1178,7 +1147,6 @@ def expressive_encoding_pipeline(
 
     pose_loss_register.lpips_loss.set_device("cuda")
     facial_loss_register.lpips.set_device("cuda")
-
 
     gammas = None
     images_tensor_last = None

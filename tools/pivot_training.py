@@ -14,6 +14,7 @@ import torch.multiprocessing as mp
 from ExpressiveEncoding.train import pivot_finetuning, StyleSpaceDecoder, \
                                  stylegan_path, edict, yaml, \
                                  logger
+from ExpressiveEncoding.kmeans_dataset import kmeans_data
 
 def kernel(
            rank, 
@@ -45,11 +46,11 @@ def kernel(
 @click.option('--resume_path', default = None)
 @click.option('--gpus', default = 1)
 def pivot_training(
-                config_path: str,
-                save_path: str,
-                resume_path: str,
-                gpus: int
-              ):
+                    config_path: str,
+                    save_path: str,
+                    resume_path: str,
+                    gpus: int
+                  ):
 
     assert gpus >= 1, "expected gpu device."
     tensorboard = os.path.join(save_path, "tensorboard", f"{time.time()}")
@@ -58,6 +59,13 @@ def pivot_training(
 
     with open(config_path) as f:
         config = edict(yaml.load(f, Loader = yaml.CLoader))
+
+    use_kmeans = config.pti.use_kmeans if hasattr(config.pti, "use_kmeans") else False
+    if use_kmeans:
+        path = os.path.join("tmp_dir", str(hash(config.latent_path)) + ".pt")
+        os.makedirs(os.path.dirname(path), exist_ok = True)
+        kmeans_info = kmeans_data(config.latent_path, path)
+        setattr(config.pti, "kmeans_info", kmeans_info)
 
     resolution = config.resolution if hasattr(config, "resolution") else 1024
     decoder = StyleSpaceDecoder(stylegan_path = stylegan_path, to_resolution = resolution)

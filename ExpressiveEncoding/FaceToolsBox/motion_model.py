@@ -378,7 +378,7 @@ def robust_region_affine_regression(
         if i != 0:
             a0 *= 2
             a3 *= 2
-            I_prev = warp_image(I_prev if images_origin is None else images_origin[i], a0, a1, a2, a3, a4, a5, matrix = matrixs[i], target_size = tuple(I_prev.shape[:2][::-1]))
+            I_prev = warp_image(I_prev if images_origin is None else images_origin[i], a0, a1, a2, a3, a4, a5, matrix = matrixs[i], target_size = tuple(I_prev.shape[:2]))
 
 
 
@@ -462,11 +462,13 @@ def solve(
             matrix = None,
             image_origin = None
          ):
+    sigma = 15
+    sigma_init = 25
     n_iters = 30
     theta = 1e-6
     omega = 1.995
-    sigma = 15 * ROOT3
-    sigma_init = 25 * ROOT3
+    sigma = sigma * ROOT3
+    sigma_init =sigma_init * ROOT3
     parameters = [
                    0,
                    0,
@@ -567,8 +569,8 @@ def affineWarpWithKey(
                      ):
 
     h, w = keyImage.shape[:2]
-    image_origin_algo = image_origin.copy()
     matrix_algo = matrix.copy() if matrix is not None else matrix
+    image_origin_algo = image_origin.copy()
     if is_fast:
         target_size = 256
         scale = max(refImage.shape[0] / target_size, refImage.shape[1] / target_size)
@@ -598,7 +600,7 @@ def affineWarpWithKey(
         parameters[0] *= scale
         parameters[3] *= scale
     warpedImage = warp_image(refImage if matrix is None else image_origin, *parameters, matrix = matrix, target_size = (h, w))
-    
+    #cv2.imwrite("omask.png", np.float32(omasks[-1]) * 255.0)
     """
     omasks = [1 - x for x in omasks]
     parameters, omasks = ba_optical_flow(pre_process(refImage_gray), pre_process(keyImage_gray), planar, omasks = omasks)
@@ -607,12 +609,12 @@ def affineWarpWithKey(
         parameters[3] *= scale
     warpedImage = warp_image(refImage if matrix is None else image_origin, *parameters, matrix = matrix, target_size = (h, w))
     """
-
     t.toc("affine_flow")
     error = np.sqrt(((get_masked_image(warpedImage) - get_masked_image(keyImage)) ** 2).mean())
     error_bench = np.sqrt(((get_masked_image(refImage) - get_masked_image(keyImage)) ** 2).mean())
     logger.info(f"mse is {error} benchmark {error_bench}")
-    return warpedImage, error <= np.sqrt(threshold), error - error_bench, parameters
+    error_diff = error - error_bench
+    return warpedImage, error <= np.sqrt(threshold) and error_diff < 0.0, error - error_bench, parameters
 
 if __name__ == "__main__":
     keyFramePath = sys.argv[1]
@@ -623,7 +625,8 @@ if __name__ == "__main__":
     keyImage = cv2.imread(keyFramePath)
     refImage = cv2.imread(refFramePath)
 
-    warpedImage, flag, _, _ = affineWarpWithKey(refImage, keyImage, planar = is_planar, is_fast = is_fast)
+
+    warpedImage, flag, _, _ = affineWarpWithKey(refImage, keyImage, planar = is_planar, is_fast = is_fast, image_origin = refImage)
 
     postfix = ".png"
     if is_planar:
@@ -631,4 +634,6 @@ if __name__ == "__main__":
     if is_fast:
         postfix = "_fast" + postfix
 
+    #cv2.imwrite(f"ref{postfix}", refImage)
+    cv2.imwrite(f"key{postfix}", keyImage)
     cv2.imwrite(f"warpedImage{postfix}", warpedImage)

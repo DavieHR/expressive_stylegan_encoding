@@ -70,7 +70,7 @@ def stylegan_alignment(image, res, res_reference = None):
     eye_right = np.mean(right_eye_points, axis=0)
 
     eye_avg = (eye_left + eye_right) * 0.5
-    eye_to_eye = eye_right - eye_left
+    eye_to_eye = (eye_right - eye_left) * 1.1
     mouth_avg = np.mean(mouth_points, axis=0)
     eye_to_mouth = mouth_avg - eye_avg
 
@@ -106,11 +106,11 @@ def get_euler_angle(res):
 
 if __name__ == "__main__":
     detector = get_detector()
-    debug = False
+    debug = True
     is_planar = False
-    is_fast = True
+    is_fast = False
     is_compensate = True
-    is_debug_mask = True
+    is_debug_mask = False
     is_debug_stylegan_alignment = True
     is_affine_first = False
     #path = "/data1/wanghaoran/Amemori/third_party/MotionModel/backup/Regression/hard_female.mp4" 
@@ -135,14 +135,14 @@ if __name__ == "__main__":
         postfix = "_affine_first" + postfix
 
     save_path = "output" + postfix
-    START_FRAMES = 0 #3 * 25 if is_debug_stylegan_alignment else 0
-    FRAMES =  25 #10 * 25 if not debug else 4
+    START_FRAMES = 585 #3 * 25 if is_debug_stylegan_alignment else 0
+    FRAMES =  START_FRAMES + 10 #10 if not debug else 10
     reader_init = imageio.get_reader(path) 
     meta_info = reader_init.get_meta_data()
     fps = meta_info["fps"]
     key_frames = []
 
-    i, j = 0, 0
+    i, j = START_FRAMES, START_FRAMES
     need_compensate_frames = dict(zip([i for i in range(1)], [0 for _ in range(1)]))
     face_infos = []
 
@@ -152,15 +152,14 @@ if __name__ == "__main__":
         reader.set_image_index(START_FRAMES)
 
         # blink check.
-        i = 0
         length_video = 0
         matrixs = []
         pad = 3
         need_compensate_frames = dict()
         need_compensate_frames[0] = dict(
-                                           compensate = False,
-                                           next_idx = 0,
-                                           ldm = None
+                                         compensate = False,
+                                         next_idx = 0,
+                                         ldm = None
                                         )
         while(1):
             if debug:
@@ -183,15 +182,15 @@ if __name__ == "__main__":
                 
             if is_debug_stylegan_alignment:
                 if (i not in need_compensate_frames) or (i in need_compensate_frames and not need_compensate_frames[i]["compensate"]):
-                    need_compensate_frames[i] = dict(
+                    need_compensate_frames[i - START_FRAMES] = dict(
                                                       compensate = False,
-                                                      prev_idx = i,
-                                                      next_idx = i
+                                                      prev_idx = i - START_FRAMES,
+                                                      next_idx = i - START_FRAMES
                                                     )
                 if need_to_warp(res):
-                    if (i not in need_compensate_frames) or (i in need_compensate_frames and not need_compensate_frames[i]["compensate"]):
-                        start = max(i - pad, 0)
-                        end = i + pad
+                    if (i - START_FRAMES not in need_compensate_frames) or (i - START_FRAMES in need_compensate_frames and not need_compensate_frames[i - START_FRAMES]["compensate"]):
+                        start = max(i - START_FRAMES - pad, 0)
+                        end = i - START_FRAMES + pad
                         next_idx = max(start - 1, 0)
                         for _j in range(start, end + 1):
                             logger.info(f"blink compensate frames is {j} with {next_idx}")
@@ -206,7 +205,7 @@ if __name__ == "__main__":
         matrixs = np.array(matrixs)
         matrixs = gaussian_filter1d(matrixs, 2, axis=0)
 
-        i = 0
+        i = START_FRAMES
         reader.set_image_index(START_FRAMES)
         while(1):
             if debug:
@@ -222,29 +221,27 @@ if __name__ == "__main__":
                 break
 
             if is_debug_stylegan_alignment:
-                matrix = matrixs[i]
+                matrix = matrixs[i - START_FRAMES]
                 if matrix is None:
                     i += 1
                     continue
-                if is_compensate and need_compensate_frames[i]["compensate"]:
-                    next_j = need_compensate_frames[i]["next_idx"]
-                    prev_j = need_compensate_frames[i]["prev_idx"]
+                if is_compensate and need_compensate_frames[i - START_FRAMES]["compensate"]:
+                    next_j = need_compensate_frames[i - START_FRAMES]["next_idx"]
+                    prev_j = need_compensate_frames[i - START_FRAMES]["prev_idx"]
                     logger.info(f"{i}th compensate with {prev_j}th and {next_j}th frames")
-                    matrix = stylegan_alignment(image, face_infos[i], face_infos[prev_j])
+                    matrix = stylegan_alignment(image, face_infos[i - START_FRAMES], face_infos[prev_j])
                 image = cv2.warpAffine(image, matrix[:2,:], (512, 512), flags=cv2.INTER_CUBIC)
                 #writer.append_data(aligned_by_stylegan)
                 #i += 1
                 #continue
             
             image_copy = image.copy()
-            cv2.imwrite(f"images/{i}.jpg",  image_copy[...,::-1])
-            """
-            res = face_infos[i]
+            res = face_infos[i - START_FRAMES]
             key_frames.append(dict(frame = image_copy, angle = get_euler_angle(res)))
             error = 0.0
             while(i > j):
-                keyFrame = key_frames[j]["frame"]
-                angle = key_frames[j]["angle"]
+                keyFrame = key_frames[j - START_FRAMES]["frame"]
+                angle = key_frames[j - START_FRAMES]["angle"]
                 angle_current = get_euler_angle(res)
                 change_yaw = np.abs(angle[1] - angle_current[1])
                 change_pitch = np.abs(angle[2] - angle_current[2])
@@ -260,17 +257,16 @@ if __name__ == "__main__":
                     break
                 logger.info(f"find a new key.")
                 j += 1
-            """
-            #cv2.imwrite(f"warpedFrame_{i}_0.jpg",  key_frames[j]["frame"][...,::-1])
-            #cv2.imwrite(f"warpedFrame_{i}_2.jpg",  image[...,::-1])
-            """
-            logger.info(f"j is {j}")
-            image = cv2.putText(image, f"affine_with_key_{j}th_{error:.5}", (51,51), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0))
-            image_copy = cv2.putText(image_copy, "origin", (51,51), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0))
-            image_key = cv2.putText(key_frames[j]["frame"], f"key_frame_{j}", (51,51), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0))
-            writer_list = [image_copy, image, image_key]
-            if is_debug_mask:
-                writer_list.append(get_masked_image(image))
+            #cv2.imwrite(f"warpedFrame_{i}_0.jpg",  image_copy)
+            #cv2.imwrite(f"warpedFrame_{i}_1.jpg",  key_frames[j]["frame"])
+            cv2.imwrite(f"warpedFrame_{i}_2_{postfix}.jpg",  image[...,::-1])
+            #logger.info(f"j is {j}")
+            #image = cv2.putText(image, f"affine_with_key_{j}th_{error:.5}", (51,51), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0))
+            #image_copy = cv2.putText(image_copy, "origin", (51,51), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0))
+            #image_key = cv2.putText(key_frames[j]["frame"], f"key_frame_{j}", (51,51), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0))
+            #writer_list = [image_copy, image, image_key]
+            #if is_debug_mask:
+            #    writer_list.append(get_masked_image(image))
+            writer_list = [image]
             writer.append_data(np.concatenate(tuple(writer_list), axis = 1))
-            """
             i += 1
