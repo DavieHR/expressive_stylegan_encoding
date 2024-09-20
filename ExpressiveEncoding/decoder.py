@@ -157,7 +157,8 @@ class StyleSpaceDecoder(CopyLayer):
                  self,
                  stylegan_path: str = None,
                  synthesis: object = None,
-                 to_resolution: int = 1024
+                 to_resolution: int = 1024,
+                 device='cuda:0',
                 ):
         if synthesis is not None:
             module = synthesis

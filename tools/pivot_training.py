@@ -8,6 +8,9 @@ import tqdm
 import click
 import torch
 import time
+import hashlib
+
+
 import torch.multiprocessing as mp
 #mp.set_start_method('spawn')
 
@@ -62,7 +65,8 @@ def pivot_training(
 
     use_kmeans = config.pti.use_kmeans if hasattr(config.pti, "use_kmeans") else False
     if use_kmeans:
-        path = os.path.join("tmp_dir", str(hash(config.latent_path)) + ".pt")
+        hash_string = hashlib.md5(config.latent_path.encode(encoding='UTF-8')).hexdigest()
+        path = os.path.join("tmp_dir", str(hash_string) + ".pt")
         os.makedirs(os.path.dirname(path), exist_ok = True)
         kmeans_info = kmeans_data(config.latent_path, path)
         setattr(config.pti, "kmeans_info", kmeans_info)

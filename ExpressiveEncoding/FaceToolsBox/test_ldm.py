@@ -6,8 +6,8 @@ import pdb
 import numpy as np
 import mediapipe as mp
 
-from  mediapipe.tasks import python
-from  mediapipe.tasks.python import vision
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 from DeepLog import logger
 from .motion_model import affineWarpWithKey, get_masked_image
 

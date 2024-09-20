@@ -4,7 +4,7 @@
 import os
 import torch
 import numpy as np
-from .StyleFlow.module.flow import cnf
+from ExpressiveEncoding.StyleFlow.module.flow import cnf
 where_am_i = os.path.dirname(os.path.realpath(__file__))
 
 class PoseEdit:
@@ -13,15 +13,18 @@ class PoseEdit:
     _zero_padding = torch.zeros(1, 18, 1)
     def __init__(self,
                  model_path = os.path.join(where_am_i, \
-                              'third_party/models/modellarge10k.pt')
+                              'third_party/models/modellarge10k.pt'),
+                 device=0,
                 ):
         self.cnf = cnf(512, '512-512-512-512-512', 17, 1)
-        self.cnf.load_state_dict(torch.load(model_path))
+        self.cnf.to(f"cuda:{device}")
+        self.cnf.load_state_dict(torch.load(model_path,map_location=f"cuda:{device}"))
         self.cnf.eval()
-        self.cnf.to("cuda:0")
+
         for p in self.cnf.parameters():
             p.requires_grad = False
         self.zflow = None
+        self.device = device
         self.reset()
 
     def reset(self):
@@ -45,7 +48,7 @@ class PoseEdit:
         zflow_array = np.concatenate([light_zflow, \
                       np.expand_dims(attribute_zflow, axis = (0, -1))], axis = 1)
         return torch.from_numpy(zflow_array).type(\
-                torch.FloatTensor).cuda()
+                torch.FloatTensor).to(f"cuda:{self.device}")
 
     def _update_zflow(self,
                       yaw,
@@ -56,7 +59,7 @@ class PoseEdit:
            0-8: light
            9-16: attributes.
                  yaw and pitch index is 11, 12.
-           
+
         """
         self.zflow[:, 11, 0, 0] = yaw
         self.zflow[:, 12, 0, 0] = pitch
@@ -73,4 +76,4 @@ class PoseEdit:
             self.reset()
             self.zflow = self.zflow.repeat(n,1,1,1)
         self._update_zflow(yaw, pitch)
-        return self.cnf(latent, self.zflow, self._zero_padding.to('cuda'), is_w_space)[0]
+        return self.cnf(latent, self.zflow, self._zero_padding.to(f'cuda:{self.device}'), is_w_space)[0]
