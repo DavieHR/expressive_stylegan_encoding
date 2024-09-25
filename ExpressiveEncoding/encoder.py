@@ -7,7 +7,50 @@ import torch
 where_am_i = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, os.path.join(where_am_i, "encoder4editing"))
 
+import numpy as np
+import torch.nn as nn
+
 from models.psp import pSp
+
+
+class vgg_base_module(nn.Module):
+    def __init__(
+                 self,
+                 in_channels,
+                 out_channels,
+                 norm = "BatchNorm2d",
+                 repeat = 1,
+                 res = False
+                ):
+        super().__init__()
+        ksize = 3
+        padding = ksize // 2
+        norm = getattr(nn, norm)
+        self.module = [
+                        nn.Conv2d(in_channels, out_channels, ksize, stride = 2, padding = 1),
+                        norm(out_channels),
+                        nn.LeakyReLU(0.2),
+                      ]
+        for _ in range(repeat):
+            self.module += [
+                            nn.Conv2d(out_channels, out_channels, ksize, stride = 1, padding = 1),
+                            norm(out_channels),
+                           ]
+
+        self.act = nn.LeakyReLU(0.2)
+
+        self.res = res
+        self.module = nn.Sequential(*self.module)
+
+    def forward(self, x):
+        y = self.module(x)
+        if self.res:
+            _,_,h,w = y.shape
+            x = nn.functional.interpolate(x, (h,w), mode = "nearest")
+            y = (x + y)
+        return self.act(y)
+              
+
 
 def get_e4e_model(checkpoint_path, device='cuda'):
     """get e4e model function
@@ -49,3 +92,42 @@ class Encoder4EditingWrapper:
         if codes.shape[1] == 18 and is_cars:
             codes = codes[:, :16, :]
         return codes
+
+class simpleEncoder(nn.Module):
+    """
+       encoder arch borrow from "BDInvert: GAN Inversion for Out-of-Range Images with Geometric Transformations"
+    """
+
+    def __init__(
+                  self,
+                  in_channels = 3,
+                  source_size = 64,
+                  base_filter_num = 128,
+                  target_size = 4,
+                  target_filter_num = 512
+                ):
+        super().__init__()
+        LOG2 = lambda x: int(np.log10(x) / np.log10(2))
+        level = LOG2(source_size) - LOG2(target_size)
+
+        self.module = [nn.Conv2d(in_channels, base_filter_num, 3, 1, 1)]
+        input_channels = base_filter_num
+        for i in range(1, level + 1):
+            output_channels = min(base_filter_num * 2 ** i, target_filter_num)
+
+            self.module.append(vgg_base_module(input_channels, output_channels))
+            input_channels = output_channels
+
+        self.module += [nn.Conv2d(output_channels, target_filter_num, 1, 1, 0)]
+        self.module = nn.Sequential(*self.module)
+ 
+        self.pooling = nn.AdaptiveAvgPool2d(source_size)
+        self.source_size = source_size
+
+    def forward(self, x):
+        _,_,h,w = x.shape
+
+        if h != self.source_size or w != self.source_size:
+            x = self.pooling(x)
+
+        return self.module(x)

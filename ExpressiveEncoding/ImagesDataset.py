@@ -93,7 +93,8 @@ class ImagesDataset(Dataset):
                  source_root,
                  latent_root,
                  source_transform=None,
-                 kmeans_info: dict = None
+                 kmeans_info: dict = None,
+                 random: bool = False
                 ):
         self.source_paths = sorted(make_dataset(source_root), \
                             key = lambda x: int(os.path.basename(x[1]).split('.')[0]))
@@ -111,8 +112,12 @@ class ImagesDataset(Dataset):
                     indexes[label] = i
                     flags[label] = True
             self.remap = indexes
-            print(len(self.remap))
+        if random:
+            files_length = len(self.source_paths) // 25
+            indexes = np.random.choice(np.array(list(range(len(self.source_paths)))), files_length)
+            self.remap = indexes
 
+            
     def __len__(self):
         if DEBUG:
             return 1800

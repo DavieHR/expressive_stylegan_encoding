@@ -7,6 +7,7 @@ import dnnlib
 import legacy
 import copy
 
+from DeepLog import logger
 
 from training.networks_stylegan2 import SynthesisNetwork, SynthesisLayer, SynthesisBlock, \
                                         ToRGBLayer, misc, modulated_conv2d, \
@@ -41,7 +42,7 @@ class StyleToRGBLayer(CopyLayer):
         torch.nn.init.zeros_(self.affine_delta.bias)
         """
 
-    def forward(self, x, w, fused_modconv=True, encoded_styles=None):
+    def forward(self, x, w, fused_modconv=True, encoded_styles=None, **kwargs):
         if isinstance(w, tuple):
             w, delta = w
             #delta_affine = self.affine_delta(delta)
@@ -65,7 +66,7 @@ class StyleSpaceSythesisLayer(CopyLayer):
         torch.nn.init.zeros_(self.affine_delta.bias)
         """
 
-    def forward(self, x, w, noise_mode='const', fused_modconv=True, gain=1, encoded_styles=None):
+    def forward(self, x, w, noise_mode='const', fused_modconv=True, gain=1, encoded_styles=None, **kwargs):
         assert noise_mode in ['random', 'const', 'none']
         in_resolution = self.resolution // self.up
         # misc.assert_shape(x, [None, self.weight.shape[1], in_resolution, in_resolution]) # not need to be squre 
@@ -122,8 +123,9 @@ class StyleSpaceSythesisBlock(CopyLayer):
 
         # Input.
         if self.in_channels == 0:
-            x = self.const.to(dtype=dtype, memory_format=memory_format)
-            x = x.unsqueeze(0).repeat([n, 1, 1, 1])
+            if x is None:
+                x = self.const.to(dtype=dtype, memory_format=memory_format)
+                x = x.unsqueeze(0).repeat([n, 1, 1, 1])
         else:
             misc.assert_shape(x, [None, self.in_channels, self.resolution // 2, self.resolution // 2])
             x = x.to(dtype=dtype, memory_format=memory_format)
@@ -166,6 +168,7 @@ class StyleSpaceDecoder(CopyLayer):
             _base_model = copy.deepcopy(load_model(stylegan_path))
             module = _base_model.synthesis
         super().__init__(module)
+
         if synthesis is None:
             self.mapping = _base_model.mapping
         self.block_resolutions = [x for x in self.block_resolutions if x <= to_resolution]
@@ -187,14 +190,18 @@ class StyleSpaceDecoder(CopyLayer):
             group_idx += group_num
         return ws_group
 
-    def forward(self, ws, **block_kwargs):
+    def forward(self, ws,  **block_kwargs):
         if isinstance(ws, torch.Tensor):
             ws = self.get_style_space(ws)
+
+        insert_feature = block_kwargs.get("insert_feature", None)
 
         if not isinstance(ws[0], list):
             ws = self._group_latent(ws)
         x = img = None
         for res, cur_ws in zip(self.block_resolutions, ws):
+            if insert_feature is not None and f'{res}' in insert_feature.keys():
+                x = insert_feature[f"{res}"]
             block = getattr(self, f'b{res}')
             x, img = block(x, img, cur_ws, **block_kwargs)
         return img

@@ -14,7 +14,6 @@ import time
 import numpy as np
 import torch.distributed as dist
 
-
 from copy import deepcopy
 from datetime import datetime
 from tqdm import tqdm
@@ -23,7 +22,6 @@ from DeepLog import logger, Timer
 from DeepLog.logger import logging
 from torchvision import transforms
 from PIL import Image
-
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
@@ -754,6 +752,7 @@ def pivot_finetuning(
     ss_path = config.ss_path if hasattr(config, "ss_path") else None
     space_finetuning = config.space_finetuning if hasattr(config, "space_finetuning") else "style_space"
     kmeans_info = config.kmeans_info if hasattr(config, "kmeans_info") else None
+    random_check = config.random_check if hasattr(config, "random_check") else False
 
     def get_dataloader(
                       ):
@@ -765,7 +764,8 @@ def pivot_finetuning(
                     transforms.ToTensor(),
                     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
                     transforms.Resize(size = (resolution, resolution))]),
-                    kmeans_info = kmeans_info
+                    kmeans_info = kmeans_info,
+                    random = random_check
                     )
             else:
                 dataset = ImagesDatasetV2(path_images, path_style_latents, expressive_path, transforms.Compose([
