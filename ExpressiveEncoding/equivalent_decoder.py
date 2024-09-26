@@ -245,7 +245,7 @@ class EquivalentStyleToRGBLayer(StyleToRGBLayer, _adaptor):
         _adaptor.__init__(self, self)
         self.register_buffer("weight_gain_buffer", torch.tensor(self.weight_gain, dtype = torch.float32))
 
-    def forward(self, x, w, fused_modconv=True, encoded_styles=None):
+    def forward(self, x, w, fused_modconv=True, encoded_styles=None, **kwargs):
         styles = w
         tmp_s = styles * self.weight_gain_buffer
         x = modulated_conv2d(x=x, conv = self.conv, styles=tmp_s, demodulate=False, fused_modconv=fused_modconv)
@@ -261,7 +261,7 @@ class EquivalentStyleSpaceSythesisLayer(StyleSpaceSythesisLayer, _adaptor):
             self.register_buffer("conv_clamp_buffer", torch.tensor(self.conv_clamp, dtype = torch.float32))
         
 
-    def forward(self, x, w, noise_mode='const', fused_modconv=True, gain=1, encoded_styles=None):
+    def forward(self, x, w, noise_mode='const', fused_modconv=True, gain=1, encoded_styles=None, **kwargs):
         assert noise_mode in ['random', 'const', 'none']
         in_resolution = self.resolution // self.up
         # misc.assert_shape(x, [None, self.weight.shape[1], in_resolution, in_resolution]) # not need to be squre 
