@@ -134,7 +134,7 @@ class ImagesDataset(Dataset):
         if self.source_transform:
             from_im = self.source_transform(from_im)
         latent = torch.load(os.path.join(self.latent_root, f'{index + 1}.pt'))
-        return from_im, [x[0].detach().cpu() for x in latent]
+        return from_im, [x[0].detach().cpu() for x in latent], index
 
 
 class ImagesDatasetW(Dataset):
@@ -258,3 +258,34 @@ class ImagesDataset_W(Dataset):
         latent = torch.load(os.path.join(self.latent_root, f'{index + 1}.pt'))
         return from_im, latent
 
+class ImagesDatasetF(ImagesDataset):
+    """ImagesDataset for pivot tuning.
+    """
+    def __init__(
+                 self,
+                 source_root,
+                 latent_root,
+                 f_latent_root,
+                 source_transform=None,
+                 kmeans_info: dict = None,
+                 random: bool = False
+                ):
+        super().__init__(
+                         source_root,
+                         latent_root,
+                         source_transform,
+                         kmeans_info,
+                         random
+                        )
+        self.f_space = f_latent_root
+
+    def __getitem__(self, index):
+        if self.remap is not None:
+            index = self.remap[index]
+        _, from_path = self.source_paths[index]
+        from_im = Image.open(from_path).convert('RGB')
+        if self.source_transform:
+            from_im = self.source_transform(from_im)
+        latent = torch.load(os.path.join(self.latent_root, f'{index + 1}.pt'))
+        f_latent = torch.load(os.path.join(self.f_space, f'{index + 1}.pt'), map_location = 'cpu')
+        return from_im, [x[0].detach().cpu() for x in latent], f_latent[0]

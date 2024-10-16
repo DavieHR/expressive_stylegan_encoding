@@ -933,15 +933,16 @@ def pivot_finetuning(
     return lastest_model_path
 
 def validate_video_gen(
-                        save_video_path:str,
-                        state_dict_path: str,
-                        latents: Union[str, List[np.ndarray]],
-                        ss_decoder: Callable,
-                        video_length: int,
-                        face_folder_path: str,
-                        resolution = 1024,
-                        w_pivot_finetuning=False,
-):
+                       save_video_path: str,
+                       state_dict_path: str,
+                       latents: Union[str, List[np.ndarray]],
+                       ss_decoder: Callable,
+                       video_length: int,
+                       face_folder_path: str,
+                       resolution: int = 1024,
+                       w_pivot_finetuning: bool = False,
+                       attribute_path: str = None
+                      ):
 
     def update_region_offset(
                               dlatents,
