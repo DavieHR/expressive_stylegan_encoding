@@ -18,8 +18,6 @@ import torch.multiprocessing as mp
 from ExpressiveEncoding.f_space_train import bdinv_detailed_training, StyleSpaceDecoder, \
                                              stylegan_path, edict, yaml, \
                                              logger
-
-
 def kernel(
            rank, 
            world_size,
@@ -28,7 +26,8 @@ def kernel(
            decoder,
            tensorboard,
            resolution,
-           resume_path
+           resume_path,
+           encoder_resume_path
           ):
     
     return bdinv_detailed_training(
@@ -41,22 +40,26 @@ def kernel(
                           epochs = config.epochs, \
                           resolution = resolution, \
                           resume_path = resume_path, \
+                          encoder_resume_path = encoder_resume_path, \
                           batchsize = config.batchsize, \
                           lr = config.lr, \
                           rank = rank, \
                           world_size = world_size \
                          )
+
 @click.command()
 @click.option('--config_path')
 @click.option('--save_path')
 @click.option('--decoder_path', default = None)
 @click.option('--resume_path', default = None)
+@click.option('--encoder_resume_path', default = None)
 @click.option('--gpus', default = 1)
 def bdinv_training_invoker(
                     config_path: str,
                     save_path: str,
                     decoder_path: str,
                     resume_path: str,
+                    encoder_resume_path: str,
                     gpus: int
                   ):
 
@@ -88,6 +91,7 @@ def bdinv_training_invoker(
                        epochs = config.epochs, \
                        resolution = resolution, \
                        resume_path = resume_path, \
+                       encoder_resume_path = encoder_resume_path, \
                        batchsize = config.batchsize, \
                        lr = config.lr \
                       )
@@ -102,7 +106,8 @@ def bdinv_training_invoker(
                         decoder,
                         tensorboard,
                         resolution,
-                        resume_path
+                        resume_path,
+                        encoder_resume_path
                         #writer
                       ),
                  nprocs=world_size,

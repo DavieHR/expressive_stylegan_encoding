@@ -1,6 +1,17 @@
 import os
 import torch
+import cv2
+import numpy as np
+from torchvision import transforms
 from PIL import Image
+from .loss.FaceParsing.model import BiSeNet
+
+WHERE_AM_I = os.path.dirname(os.path.realpath(__file__))
+pretrained_models_path = None
+if os.path.exists(os.path.join(WHERE_AM_I, f"third_party/models/stylegan2_ffhq.pkl")):
+    pretrained_models_path = os.path.join(WHERE_AM_I, 'third_party/models')
+else:
+    pretrained_models_path = '/app/pretrained_models'
 
 IMG_EXTENSIONS = [
     '.jpg', '.JPG', '.jpeg', '.JPEG',
@@ -69,3 +80,33 @@ def make_train_dirs(path: str) -> dict:
         if not v.endswith(".pt"):
             os.makedirs(v, exist_ok = True)
     return sub_dirs
+
+class face_parsing:
+    def __init__(
+                 self, 
+                 path = os.path.join(f"{pretrained_models_path}", "79999_iter.pth")
+                ):
+
+        net = BiSeNet(19) 
+        state_dict = torch.load(path)
+        net.load_state_dict(state_dict)
+        net.eval()
+        net.to("cpu")
+        self.net = net
+        self.to_tensor = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
+
+    def __call__(self, x):
+
+        h, w = x.shape[:2]
+        x = Image.fromarray(np.uint8(x))
+        image = x.resize((512, 512), Image.BILINEAR)
+        img = self.to_tensor(image).unsqueeze(0).to("cpu")
+        out = self.net(img)[0].detach().squeeze(0).cpu().numpy().argmax(0)
+        mask = np.zeros_like(out)
+        for label in list(range(1,  7)) + list(range(10, 16)):
+            mask[out == label] = 1
+        out = cv2.resize(np.float32(mask), (w,h))
+        return np.repeat(out[..., np.newaxis], 3, axis = 2)

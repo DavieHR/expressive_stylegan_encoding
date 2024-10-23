@@ -28,19 +28,22 @@ def kernel(
            decoder,
            tensorboard,
            resolution,
-           resume_path
+           resume_path,
+           encoder_resume_path
           ):
     
     return f_space_training(
                           config.gt_path, \
                           config.latent_path, \
                           config.f_latent_path, \
+                          snapshots,
                           decoder, \
                           config.pti, \
                           tensorboard = tensorboard, \
                           epochs = config.epochs, \
                           resolution = resolution, \
                           resume_path = resume_path, \
+                          encoder_resume_path = encoder_resume_path, \
                           batchsize = config.batchsize, \
                           lr = config.lr, \
                           rank = rank, \
@@ -51,14 +54,16 @@ def kernel(
 @click.option('--save_path')
 @click.option('--decoder_path', default = None)
 @click.option('--resume_path', default = None)
+@click.option('--encoder_resume_path', default = None)
 @click.option('--gpus', default = 1)
-def bdinv_training_invoker(
-                    config_path: str,
-                    save_path: str,
-                    decoder_path: str,
-                    resume_path: str,
-                    gpus: int
-                  ):
+def f_space_decoder_training_invoker(
+                        config_path: str,
+                        save_path: str,
+                        decoder_path: str,
+                        encoder_resume_path: str,
+                        resume_path: str,
+                        gpus: int
+                      ):
 
     assert gpus >= 1, "expected gpu device."
     tensorboard = os.path.join(save_path, "tensorboard", f"{time.time()}")
@@ -89,6 +94,7 @@ def bdinv_training_invoker(
                        epochs = config.epochs, \
                        resolution = resolution, \
                        resume_path = resume_path, \
+                       encoder_resume_path = encoder_resume_path, \
                        batchsize = config.batchsize, \
                        lr = config.lr \
                       )
@@ -103,7 +109,8 @@ def bdinv_training_invoker(
                         decoder,
                         tensorboard,
                         resolution,
-                        resume_path
+                        resume_path,
+                        encoder_resume_path
                         #writer
                       ),
                  nprocs=world_size,
@@ -115,4 +122,4 @@ if __name__ == '__main__':
     os.environ["MASTER_ADDR"] = "localhost"
     if "MASTER_PORT" not in os.environ:
         os.environ["MASTER_PORT"] = "29500"
-    bdinv_training_invoker()
+    f_space_decoder_training_invoker()

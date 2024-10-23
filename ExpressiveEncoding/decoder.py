@@ -259,3 +259,5 @@ class StyleSpaceDecoder(CopyLayer):
             styles_space += styles
         return styles_space
 
+    def get_base_code(self):
+        return self.b4.const

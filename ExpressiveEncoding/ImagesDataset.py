@@ -11,7 +11,7 @@ from PIL import Image
 from multiprocessing import Lock
 
 from DeepLog import logger
-from .utils import make_dataset
+from .utils import make_dataset,face_parsing
 
 lock = Lock()
 DEBUG = os.environ.get("DEBUG", 0)
@@ -287,5 +287,51 @@ class ImagesDatasetF(ImagesDataset):
         if self.source_transform:
             from_im = self.source_transform(from_im)
         latent = torch.load(os.path.join(self.latent_root, f'{index + 1}.pt'))
-        f_latent = torch.load(os.path.join(self.f_space, f'{index + 1}.pt'), map_location = 'cpu')
+        f_latent = torch.load(os.path.join(self.f_space, f'{index}.pt'), map_location = 'cpu')
         return from_im, [x[0].detach().cpu() for x in latent], f_latent[0]
+
+class ImagesDatasetHasMask(ImagesDataset):
+    """ImagesDataset for pivot tuning.
+    """
+    def __init__(
+                 self,
+                 source_root,
+                 latent_root,
+                 source_transform=None,
+                 kmeans_info: dict = None,
+                 random: bool = False
+                ):
+        super().__init__(
+                         source_root,
+                         latent_root,
+                         source_transform,
+                         kmeans_info,
+                         random
+                        )
+        self.face_parser = face_parsing()
+        self.cache = dict()
+
+    def get_facial_mask(
+                        self, 
+                        x, 
+                        index
+                       ):
+        if index not in self.cache.keys():
+            from_cache = Image.fromarray(np.uint8(self.face_parser(x) * 255.0))
+            self.cache[index] = from_cache
+        else:
+            from_cache = self.cache[index]
+            
+        return from_cache
+
+    def __getitem__(self, index):
+        if self.remap is not None:
+            index = self.remap[index]
+        _, from_path = self.source_paths[index]
+        from_im = Image.open(from_path).convert('RGB')
+        mask = self.get_facial_mask(np.array(from_im), index)
+        if self.source_transform:
+            from_im = self.source_transform(from_im)
+            mask = self.source_transform(mask)
+        latent = torch.load(os.path.join(self.latent_root, f'{index + 1}.pt'))
+        return from_im, [x[0].detach().cpu() for x in latent], index, mask

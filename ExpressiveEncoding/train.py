@@ -40,9 +40,8 @@ from .FaceToolsBox.alignment import get_detector, infer, \
 from .FaceToolsBox.crop_image import crop
 from .ImagesDataset import ImagesDataset, ImagesDatasetV2, ImagesDatasetV3, ImagesDatasetW
 from .loss import LossRegisterBase
-from .loss.FaceParsing.model import BiSeNet
 
-from .utils import to_tensor, from_tensor, make_train_dirs
+from .utils import to_tensor, from_tensor, make_train_dirs, face_parsing
 
 points = [(10, 338),(338, 297),(297, 332),
           (332, 284),(284, 251),(251, 389),
@@ -115,32 +114,6 @@ yaw_to_optim_pre = None
 pitch_to_optim_pre = None
 
 where_am_i = os.path.dirname(os.path.realpath(__file__))
-class face_parsing:
-    def __init__(self, path = os.path.join(f"{pretrained_models_path}", "79999_iter.pth")):
-
-        net = BiSeNet(19) 
-        state_dict = torch.load(path)
-        net.load_state_dict(state_dict)
-        net.eval()
-        net.to("cuda:0")
-        self.net = net
-        self.to_tensor = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-        ])
-
-    def __call__(self, x):
-
-        h, w = x.shape[:2]
-        x = Image.fromarray(np.uint8(x))
-        image = x.resize((512, 512), Image.BILINEAR)
-        img = self.to_tensor(image).unsqueeze(0).to("cuda:0")
-        out = self.net(img)[0].detach().squeeze(0).cpu().numpy().argmax(0)
-        mask = np.zeros_like(out)
-        for label in list(range(1,  7)) + list(range(10, 16)):
-            mask[out == label] = 1
-        out = cv2.resize(np.float32(mask), (w,h))
-        return out[..., np.newaxis]
 
 # instance face parse
 

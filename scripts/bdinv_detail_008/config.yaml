@@ -1,6 +1,5 @@
 gt_path: "/data1/chenlong/online_model_set/video/eR6CMmTu_2/video_split/smooth"
 latent_path: "/data1/chenlong/0517/video/0822/eR6CMmTu_2/eR6CMmTu_2_exp_set_v4_depoly/exp/facial"
-f_latent_path: "results/bdinv_detail_005/snapshots/"
 pti:
     net:
         base_filter_num: 64
@@ -22,6 +21,6 @@ pti:
               name: L2Loss
               weights: 10
 epochs: 50
-batchsize: 8
-lr: 0.0003
+batchsize: 4
+lr: 10
 resolution: 512
