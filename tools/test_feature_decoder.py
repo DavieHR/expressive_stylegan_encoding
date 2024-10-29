@@ -19,6 +19,7 @@ from DeepLog.logger import logging
 from ExpressiveEncoding.train import StyleSpaceDecoder, \
                                  stylegan_path, edict, yaml,load_model,from_tensor,Encoder4EditingWrapper,to_tensor
 
+from ExpressiveEncoding.f_space_train import get_soft_mask_by_region
 
 def validate_video_gen(
                         save_video_path:str,
@@ -54,8 +55,12 @@ def validate_video_gen(
                 image_gt_path = image_gt_path.replace('png', 'jpg')
             image_gt = cv2.imread(image_gt_path)[...,::-1]
             image_gt = cv2.resize(image_gt, (512,512))
-            image_concat = np.concatenate((image, image_gt), axis = 0)
-            writer.append_data(image_concat)
+
+            mask = get_soft_mask_by_region()
+            image_concat = np.concatenate((image, image * mask + image_gt * (1- mask) ,image_gt), axis = 0)
+
+
+            writer.append_data(np.uint8(image_concat))
             if state_dict_path is None:
                 workdir = os.path.join(os.path.dirname(save_video_path), "images")
                 os.makedirs(workdir,exist_ok = True)
@@ -65,7 +70,7 @@ import click
 @click.command()
 @click.option('--expname',default='eR6CMmTu_2')
 @click.option('--save_path',default='./results')
-@click.option('--latest_decoder_path',default='results/f_space_decoder_004/snapshots/10.pth')
+@click.option('--latest_decoder_path',default='results/f_space_decoder_004/snapshots/38.pth')
 @click.option('--f_space_path',default='./results/f_space_012.pt')
 def expressive_encoding_pipeline(expname,save_path,latest_decoder_path,f_space_path):
     os.makedirs(save_path, exist_ok=True)

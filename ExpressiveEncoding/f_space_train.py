@@ -105,15 +105,15 @@ def bdinv_training(
     dataloader = get_dataloader()
     net = config.net
     name = config.net.name if hasattr(config.net, "name") else "simpleEncoder"
-    encoder =   eval(name)(
-                            base_filter_num = net.base_filter_num, \
-                            source_size = net.source_size, \
-                            target_size= net.target_size, \
-                            target_filter_num = net.target_filter_num,
-                            base_code = ss_decoder.get_base_code().detach() if "V2" in name else None,
-                            norm = config.net.norm if hasattr(config.net, "norm") else "BatchNorm2d",
-                            res = config.net.res if hasattr(config.net, "res") else False
-                          )
+    encoder = eval(name)(
+                         base_filter_num = net.base_filter_num, \
+                         source_size = net.source_size, \
+                         target_size= net.target_size, \
+                         target_filter_num = net.target_filter_num,
+                         base_code = ss_decoder.get_base_code().detach() if "V2" in name else None,
+                         norm = config.net.norm if hasattr(config.net, "norm") else "BatchNorm2d",
+                         res = config.net.res if hasattr(config.net, "res") else False
+                        )
     
     logger.info(f"{name}: {encoder}")
 

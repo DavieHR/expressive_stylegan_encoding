@@ -31,7 +31,6 @@ class CopyLayer(torch.nn.Module):
                 value = getattr(module_copy, _attr)
                 setattr(self, _attr, value)
 
-
 class StyleToRGBLayer(CopyLayer):
     def __init__(self, module):
         super().__init__(module)

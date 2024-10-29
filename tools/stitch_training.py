@@ -1,23 +1,19 @@
-"""get style space latent codes script.
-"""
 import os
 import sys
-import re
 sys.path.insert(0, os.getcwd())
+
+import re
 import tqdm
 import click
 import torch
 import time
 import hashlib
-from tqdm import tqdm
-
-
 import torch.multiprocessing as mp
-#mp.set_start_method('spawn')
 
-from ExpressiveEncoding.f_space_train import bdinv_training, StyleSpaceDecoder, \
-                                             stylegan_path, edict, yaml, \
-                                             logger
+from tqdm import tqdm
+from ExpressiveEncoding.stitch_train import stitch_training, StyleSpaceDecoder, \
+                                            stylegan_path, edict, yaml, \
+                                            logger
 
 def kernel(
            rank, 
@@ -30,7 +26,7 @@ def kernel(
            resume_path
           ):
     
-    return bdinv_training(
+    return stitch_training(
                           config.gt_path, \
                           config.latent_path, \
                           snapshots, \
@@ -51,7 +47,7 @@ def kernel(
 @click.option('--decoder_path', default = None)
 @click.option('--resume_path', default = None)
 @click.option('--gpus', default = 1)
-def bdinv_training_invoker(
+def stitch_training_invoker(
                     config_path: str,
                     save_path: str,
                     decoder_path: str,
@@ -78,7 +74,7 @@ def bdinv_training_invoker(
 
 
     if gpus <= 1:
-        bdinv_training(
+        stitch_training(
                        config.gt_path, \
                        config.latent_path, \
                        snapshots, \
@@ -114,4 +110,4 @@ if __name__ == '__main__':
     os.environ["MASTER_ADDR"] = "localhost"
     if "MASTER_PORT" not in os.environ:
         os.environ["MASTER_PORT"] = "29500"
-    bdinv_training_invoker()
+    stitch_training_invoker()
